@@ -160,7 +160,7 @@ python run_audit.py https://example.com --external off
 # run one skill on its own
 python skills/external-evidence/scripts/audit.py https://example.com
 
-# run the test suite (189 tests + structural checks on the marketplace itself)
+# run the test suite (321 tests + structural checks on the marketplace itself)
 python tests/run_tests.py
 ```
 
@@ -543,7 +543,7 @@ brand-evidence-auditor/
 ├── examples/                        sample-report.json · sample-report.txt
 └── tests/
     ├── run_tests.py · helpers.py · fixture_server.py
-    ├── test_*.py                    189 tests
+    ├── test_*.py                    321 tests
     └── fixtures/{site_healthy,site_broken}/
 ```
 
