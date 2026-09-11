@@ -1,0 +1,117 @@
+{
+  "name": "brand-evidence-auditor",
+  "version": "1.0.0",
+  "title": "Brand Evidence Auditor",
+  "description": "Audits a website for AI visibility across both halves of the problem: off-site discoverability (can this entity be corroborated and told apart from others?) and on-site retrieval and engagement (can a retrieval agent reach the pages, extract and trust the facts, cite them, and does a referred visitor find the answer?). Every finding is backed by an observation taken from bytes the audited site or its own declared identifiers actually served.",
+  "author": "Pranshi Mittal, Rishika Singla, Isha Sinduria",
+  "license": "MIT",
+  "runtime": {
+    "language": "python",
+    "minimum_version": "3.9",
+    "dependencies": [],
+    "network": "outbound HTTP(S) GET/HEAD to the audited host, plus a bounded off-site probe of at most 8 read-only requests (up to 6 external references the site itself declares, plus up to 2 variants of its own hostname); disable with --external off",
+    "writes": "report files in the chosen output directory only"
+  },
+  "entrypoint": "evidence-path-orchestrator",
+  "skills": [
+    {
+      "name": "evidence-path-orchestrator",
+      "path": "skills/evidence-path-orchestrator",
+      "entrypoint": true,
+      "entrypoint_command": "python skills/evidence-path-orchestrator/scripts/run_audit.py <url> [--scope site|page] [--max-pages N] [--max-seconds N] [--out-dir DIR]",
+      "summary": "The single entry point. Decides scope, collects site evidence once, composes the four audit skills over it, gates on confidence, prioritises, and emits the report.",
+      "produces": [
+        "audit-report.json",
+        "audit-report.txt",
+        "agent-brief.json (optional)"
+      ]
+    },
+    {
+      "name": "machine-readability",
+      "path": "skills/machine-readability",
+      "entrypoint": false,
+      "summary": "Can a retrieval agent reach the site's important pages and extract text from them? Covers robots and indexing directives, broken destinations, canonical identity, client-side rendering gaps, boilerplate dominance, page labelling, sitemaps and anchor semantics.",
+      "detectors": [
+        "MR-001",
+        "MR-002",
+        "MR-003",
+        "MR-004",
+        "MR-005",
+        "MR-006",
+        "MR-007",
+        "MR-008",
+        "MR-009"
+      ],
+      "standalone_command": "python skills/machine-readability/scripts/audit.py <url>"
+    },
+    {
+      "name": "fact-integrity",
+      "path": "skills/fact-integrity",
+      "entrypoint": false,
+      "summary": "If a retrieval agent reads the page, will it take away the correct fact, and can that fact be dated and attributed? Covers entity naming, entity identity markup, structured-data contradictions, duplicate content, freshness signals and editorial attribution.",
+      "detectors": [
+        "FI-001",
+        "FI-002",
+        "FI-003",
+        "FI-004",
+        "FI-005",
+        "FI-006",
+        "FI-007"
+      ],
+      "standalone_command": "python skills/fact-integrity/scripts/audit.py <url>"
+    },
+    {
+      "name": "arrival-experience",
+      "path": "skills/arrival-experience",
+      "entrypoint": false,
+      "summary": "If a research agent sends a person here, does the page confirm the answer and offer a next step? Covers title/content intent mismatch, orientation gaps, informational dead ends, unresolved context dependencies and promotional interference.",
+      "detectors": [
+        "AX-001",
+        "AX-002",
+        "AX-003",
+        "AX-004",
+        "AX-005",
+        "AX-006",
+        "AX-007"
+      ],
+      "standalone_command": "python skills/arrival-experience/scripts/audit.py <url>"
+    },
+    {
+      "name": "external-evidence",
+      "path": "skills/external-evidence",
+      "entrypoint": false,
+      "summary": "Off-site discoverability: can this entity be corroborated and told apart from similarly-named others, and do references published elsewhere lead back here? Probes only the external references the site itself declares and its own hostname variants — never a search engine — and never treats absence of external presence as a defect.",
+      "detectors": [
+        "EX-001",
+        "EX-002",
+        "EX-003",
+        "EX-004",
+        "EX-005",
+        "EX-006"
+      ],
+      "standalone_command": "python skills/external-evidence/scripts/audit.py <url>"
+    }
+  ],
+  "shared": {
+    "lib/evidencekit": "Standard-library-only evidence collection shared by every skill: budgeted read-only fetching, robots parsing, bounded stratified crawling, HTML-to-evidence extraction including hidden/collapsed content, deterministic text measurement, entity-identity primitives, bounded off-site probing, and the finding/confidence model.",
+    "references/defect-registry.json": "The detection methodology as data: 29 defects, each with its mechanism, required evidence, false-positive guards, severity conditions and verified fix."
+  },
+  "guarantees": [
+    "Read-only: only GET and HEAD requests are ever issued.",
+    "robots.txt is fetched first and obeyed for every URL, including link verification.",
+    "Bounded: page count, per-request timeout, response size and total wall-clock time are all capped.",
+    "Recommend-only: the audit never modifies the audited site.",
+    "Every finding carries at least one evidence item with a URL and a measurement.",
+    "Findings below the confidence gate are reported separately under needs_validation, never as findings.",
+    "Off-site probing is limited to references the site itself declares and its own hostname variants, is capped at 8 requests in total, and can be disabled entirely with --external off.",
+    "No browser engine is used. Rendering claims are stated as inferred from served bytes unless the caller supplies rendered snapshots, and the report says which applies.",
+    "Absence of external references, and a missing sitemap on a well-linked site, are reported as opportunities rather than defects."
+  ],
+  "submission": "Adobe University Hackathon 2026 — Round 3: Build the Agent Skill Marketplace",
+  "composition": {
+    "flow": "agent -> orchestrator -> shared evidence -> audit skills -> findings -> confidence gate -> prioritisation -> report",
+    "entrypoint_responsibility": "Scope decision, one bounded evidence collection, skill composition, cross-skill merging and suppression, confidence gating, prioritisation, proactive opportunities, schema validation and report emission.",
+    "skill_responsibility": "Each audit skill answers one question over the shared evidence and returns findings with evidence attached. Skills never fetch, never prioritise and never emit reports.",
+    "standalone_use": "Each audit skill can be run alone via skills/<name>/scripts/audit.py, which returns a skill result rather than a marketplace report. These are not marketplace entrypoints."
+  }
+}

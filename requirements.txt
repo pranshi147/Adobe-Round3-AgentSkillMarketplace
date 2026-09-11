@@ -1,0 +1,11 @@
+# brand-evidence-auditor has NO third-party runtime dependencies.
+#
+# Everything it needs ships with CPython 3.9+:
+#   urllib.request / urllib.robotparser  read-only HTTP and robots.txt
+#   html.parser                          HTML -> structured evidence
+#   xml.etree.ElementTree                sitemap parsing
+#   json, re, gzip, dataclasses, unittest
+#
+# This file is intentionally empty of installs. `pip install -r requirements.txt`
+# is a no-op, which is the point: the marketplace runs anywhere Python does,
+# with no network install step and no dependency surface to audit.

@@ -1,0 +1,283 @@
+AI VISIBILITY AUDIT
+========================================================================================
+(partial audit — fewer pages were read than requested; see LIMITATIONS)
+Site        : http://demo.example.com/
+Audited at  : 2026-09-11T03:48:30Z
+Scope       : site — 13 page(s) examined, 17 request(s), 0.4s
+
+SUMMARY
+----------------------------------------------------------------------------------------
+Findings: 16    Critical: 0   High: 5   Medium: 9   Low: 2
+Evidence path stages with findings: DISCOVER, IDENTIFY, EXTRACT, UNDERSTAND, TRUST, CITE, ENGAGE
+
+TOP PRIORITIES
+----------------------------------------------------------------------------------------
+[P0] F-001 · Structured data disagrees with the visible page  (high, TRUST, confidence 0.88)
+  Why it matters: A research agent can quote a price, name or availability that the page
+  does not actually show.
+  Mechanism: Structured data is trusted precisely because it is unambiguous. When JSON-
+  LD asserts a price, name or availability that appears nowhere in the visible text, a
+  system reading the markup extracts a fact the page itself does not support — producing
+  a confidently-stated wrong answer rather than a missing one.
+  Evidence:
+    - http://demo.example.com/product-blender.html — JSON-LD price does not match the
+    visible page [structured value="999"; visible value(s)="1299"]
+  Fix: Make price in JSON-LD render from the same source as the visible value on
+  http://demo.example.com/product-blender.html.
+    - Bind the JSON-LD field to the same data source that renders the visible value,
+    rather than a separate constant or feed.
+    - Add a build/CI assertion that fails when the serialised markup value differs from
+    the rendered value.
+    - Where the markup is intentionally a starting price, use the correct schema field
+    (e.g. lowPrice within AggregateOffer) and reflect that in the visible copy.
+  Verify: Fetch the page, extract the JSON-LD field and the visible value, and confirm
+  they match; re-run the audit.
+  Effort: medium
+
+[P0] F-002 · Canonical URLs conflict with page identity  (high, IDENTIFY, confidence 0.9)
+  Why it matters: Content is attributed to the wrong URL, or dropped as a duplicate,
+  making a stable citation target impossible.
+  Mechanism: rel=canonical tells a retrieval system which URL *is* this document. When
+  it points off-site, to a dead URL, or collapses pages with materially different
+  content onto one address, the machine either attributes the content to the wrong
+  address or discards the page as a duplicate — so a citation cannot resolve back to it.
+  Evidence:
+    - http://demo.example.com/ — two pages with materially different content declare the
+    same canonical URL [other page=http://demo.example.com/city-picker.html; shared
+    canonical=http://demo.example.com/; main-text similarity=0.00]
+    - http://demo.example.com/city-picker.html — two pages with materially different
+    content declare the same canonical URL [other
+    page=http://demo.example.com/mismatch.html; shared
+    canonical=http://demo.example.com/; main-text similarity=0.00]
+  Fix: Point each page's rel=canonical at its own live, preferred URL.
+    - Set rel=canonical to the page's own absolute HTTPS URL unless it is a genuine
+    duplicate.
+    - Where pages truly duplicate one another, keep the canonical but make the
+    duplicate's content identical, or differentiate the content and give each its own
+    canonical.
+    - Remove canonicals pointing at URLs that do not return 200.
+  Verify: Fetch each affected page, confirm the canonical resolves to a 200 URL that
+  serves the same content, and re-run the audit.
+  Effort: small
+
+[P1] F-003 · The site names its own brand inconsistently  (high, IDENTIFY, confidence 0.85)
+  Why it matters: Claims from this site may be attributed to the wrong organisation, or
+  not connected to the brand at all.
+  Mechanism: An entity-resolution step answers 'which organisation is this?' by
+  reconciling the title suffix, og:site_name, Organization/WebSite JSON-LD, the logo alt
+  text and the copyright line. When these disagree in ways that are not simple
+  abbreviations, the entity cannot be pinned to one name, and claims found here may be
+  attributed to a different organisation or merged with a similarly-named one.
+  Evidence:
+    - http://demo.example.com/ — brand name asserted by og:site_name [value="Zenith
+    Retail" (normalised: "zenith retail")]
+    - http://demo.example.com/ — brand name asserted by Organization/WebSite JSON-LD
+    name [value="Apex Commerce Pvt Ltd" (normalised: "apex commerce")]
+    - http://demo.example.com/ — brand name asserted by logo alt text [value="Zenith
+    Retail" (normalised: "zenith retail")]
+  Fix: Publish one canonical brand name and use it identically in every identity
+  surface.
+    - Choose the canonical legal/trading name and apply it to og:site_name, the
+    Organization JSON-LD `name`, the logo alt text and the copyright line.
+    - Add `alternateName` to the Organization JSON-LD for legitimate variants rather
+    than using them interchangeably.
+    - Add `sameAs` identifiers (official social, Wikipedia/Wikidata, registry listings)
+    so the entity resolves to one node.
+  Verify: Re-run the audit and confirm all name sources normalise to the same value;
+  check the Organization JSON-LD parses and contains sameAs.
+  Effort: small
+
+DETAILED FINDINGS BY EVIDENCE-PATH STAGE
+----------------------------------------------------------------------------------------
+DISCOVER — Can a retrieval agent reach the page at all?
+  F-004 [high/P2] Content paths are disallowed to crawlers in robots.txt
+    Detector: important_paths_blocked_by_robots (MR-001), evidence level: verified
+    Evidence: http://demo.example.com/robots.txt: robots.txt publishes a Disallow rule
+    that matches content URLs [1 discovered content URL(s) matched by rule: Disallow:
+    /guides/] | http://demo.example.com/guides/torque.html: URL is listed in the sitemap
+    but disallowed to our user-agent [matched robots rule: Disallow: /guides/]
+    Action: Narrow the Disallow rule so it covers only non-content paths and leaves
+    http://demo.example.com/guides/torque.html crawlable.
+
+  F-005 [high/P2] Internally-linked pages return errors
+    Detector: broken_internal_destinations (MR-003), evidence level: verified
+    Evidence: http://demo.example.com/missing-page.html: internally linked destination
+    returns HTTP 404 [linked from: http://demo.example.com/]
+    Action: Repair or remove the 1 internal link target(s) that return errors.
+
+  F-010 [medium/P2] Content pages carry a noindex directive
+    Detector: noindex_on_content_page (MR-002), evidence level: verified
+    Evidence: http://demo.example.com/offers-archive.html: page excludes itself from
+    indexing via meta robots tag [meta robots tag value: noindex, follow]
+    Action: Remove the noindex directive from http://demo.example.com/offers-
+    archive.html and keep it only on genuine utility URLs.
+
+IDENTIFY — Can it tell what entity/page this is?
+  F-002 [high/P0] Canonical URLs conflict with page identity
+    Detector: canonical_conflict (MR-004), evidence level: verified
+    Evidence: http://demo.example.com/: two pages with materially different content
+    declare the same canonical URL [other page=http://demo.example.com/city-picker.html;
+    shared canonical=http://demo.example.com/; main-text similarity=0.00] |
+    http://demo.example.com/city-picker.html: two pages with materially different
+    content declare the same canonical URL [other
+    page=http://demo.example.com/mismatch.html; shared
+    canonical=http://demo.example.com/; main-text similarity=0.00]
+    Action: Point each page's rel=canonical at its own live, preferred URL.
+    Affected URLs: 3
+
+  F-003 [high/P1] The site names its own brand inconsistently
+    Detector: entity_name_inconsistency (FI-001), evidence level: corroborated
+    Evidence: http://demo.example.com/: brand name asserted by og:site_name
+    [value="Zenith Retail" (normalised: "zenith retail")] | http://demo.example.com/:
+    brand name asserted by Organization/WebSite JSON-LD name [value="Apex Commerce Pvt
+    Ltd" (normalised: "apex commerce")] | http://demo.example.com/: brand name asserted
+    by logo alt text [value="Zenith Retail" (normalised: "zenith retail")] |
+    http://demo.example.com/: brand name asserted by copyright line [value="Zenith
+    Retail" (normalised: "zenith retail")]
+    Action: Publish one canonical brand name and use it identically in every identity
+    surface.
+
+  F-006 [medium/P2] The site points at external profiles that do not resolve
+    Detector: declared_external_profile_unreachable (EX-001), evidence level: verified
+    Evidence: http://demo.example.com/profiles/missing.html: an external identifier
+    declared by this site does not resolve [HTTP 404; declared via sameAs in entity
+    markup on http://demo.example.com/]
+    Action: Correct or remove the declared external identifiers that do not resolve.
+
+  F-011 [medium/P2] Pages are not distinguishable by title or heading
+    Detector: page_identity_metadata_missing (MR-007), evidence level: verified
+    Evidence: http://demo.example.com/mismatch.html: distinct pages with different
+    content publish an identical title [title="Wholesale fasteners — Zenith Retail" also
+    used by http://demo.example.com/promo-heavy.html; main-text similarity=0.00; 2 URLs
+    share it]
+    Action: Give every distinct page a unique title and a single descriptive H1.
+    Affected URLs: 2
+
+  F-014 [low/P2] A declared external profile does not mention the brand name
+    Detector: external_profile_does_not_corroborate_brand (EX-002), evidence level:
+    corroborated
+    Evidence: http://demo.example.com/profiles/unrelated.html: a declared external
+    identifier resolves but does not name this brand [retrieved title="Riverbend Cycling
+    Club — members page"; no compatible form of "Zenith Retail", "Apex Commerce Pvt Ltd"
+    found in its title, site name, visible text or URL path]
+    Action: Point declared identifiers at profiles that name the brand, and state the
+    brand name on those profiles.
+
+EXTRACT — Can it read the facts out of the page?
+  F-012 [medium/P2] Primary content is absent from the served HTML
+    Detector: client_side_rendering_gap (MR-005), evidence level: corroborated
+    Evidence: http://demo.example.com/app-shell.html: served HTML contains almost no
+    main-region text; content appears to be assembled client-side [main-region words in
+    served HTML=0 (threshold 120); empty application root element id="root"] |
+    http://demo.example.com/catalog.html: served HTML contains almost no main-region
+    text; content appears to be assembled client-side [main-region words in served
+    HTML=0 (threshold 120); empty application root element id="app"]
+    Action: Server-render or pre-render the primary content of
+    http://demo.example.com/app-shell.html so the served HTML contains the page's key
+    facts as text.
+    Affected URLs: 2
+
+  F-016 [low/P3] Promotional and repeated blocks crowd out the page's substance
+    Detector: promotional_interference (AX-005), evidence level: corroborated
+    Evidence: http://demo.example.com/promo-heavy.html: an identical text block is
+    emitted several times on the same page [block repeated 3× : "Members save an extra
+    five percent on every order this week"; promotional share of main text=21%]
+    Action: Reduce promotional share above the fold and de-duplicate repeated blocks.
+
+UNDERSTAND — Are relationships and context explicit?
+  F-009 [medium/P2] The page never states plainly what it is about
+    Detector: orientation_gap (AX-002), evidence level: corroborated
+    Evidence: http://demo.example.com/: the opening content contains no plain statement
+    of what this is [first 77 served words contain no definitional sentence pattern;
+    opening text: "Shop everything at Zenith Retail Welcome. Thousands of products
+    across kitchen, home, tools and outdoor. Free delivery on orders above ₹499. New
+    stock lands ev…"] | http://demo.example.com/product-blender.html: the opening
+    content contains no plain statement of what this is [first 121 served words contain
+    no definitional sentence pattern; opening text: "Vortex 600W blender The Vortex 600W
+    blender costs ₹1,299 and comes with a 1.5 litre jar, a pulse setting and a two year
+    warranty on the motor. The blades are s…"]
+    Action: Open http://demo.example.com/ with one plain sentence stating what it is,
+    who it is for, and what it does.
+    Affected URLs: 2
+
+  F-015 [medium/P3] Substantive content depends on a user context the fetcher cannot supply
+    Detector: unresolved_context_dependency (AX-004), evidence level: corroborated
+    Evidence: http://demo.example.com/city-picker.html: page content appears to depend
+    on a user context the fetcher cannot supply [context control found: "Select your
+    city to see delivery slots and stock."; served main-region words=22]
+    Action: Serve a crawlable, context-independent default view alongside the
+    personalised one.
+
+TRUST — Are the facts consistent and datable?
+  F-001 [high/P0] Structured data disagrees with the visible page
+    Detector: structured_data_contradicts_page (FI-003), evidence level: corroborated
+    Evidence: http://demo.example.com/product-blender.html: JSON-LD price does not match
+    the visible page [structured value="999"; visible value(s)="1299"]
+    Action: Make price in JSON-LD render from the same source as the visible value on
+    http://demo.example.com/product-blender.html.
+
+  F-007 [medium/P2] Pages assert current information but expose no date signal
+    Detector: timeliness_claimed_without_date_signal (FI-005), evidence level: verified
+    Evidence: http://demo.example.com/: page asserts current information but exposes no
+    date signal [timeliness phrase="latest"; no JSON-LD date, no <time datetime>, no
+    parseable visible date; volatile commercial claim present] |
+    http://demo.example.com/blog/news-one.html: page asserts current information but
+    exposes no date signal [timeliness phrase="latest"; no JSON-LD date, no <time
+    datetime>, no parseable visible date] | http://demo.example.com/blog/news-two.html:
+    page asserts current information but exposes no date signal [timeliness
+    phrase="latest"; no JSON-LD date, no <time datetime>, no parseable visible date] |
+    http://demo.example.com/offers-archive.html: page asserts current information but
+    exposes no date signal [timeliness phrase="current"; no JSON-LD date, no <time
+    datetime>, no parseable visible date; volatile commercial claim present] | (+1
+    further affected page(s))
+    Action: Expose a machine-readable last-updated date on pages that assert current
+    information.
+    Affected URLs: 5
+
+CITE — Can a specific passage be attributed and quoted?
+  F-013 [medium/P2] The same content is served at multiple URLs without consolidation
+    Detector: duplicate_content_unconsolidated (FI-004), evidence level: verified
+    Evidence: http://demo.example.com/copy-a.html: a second URL serves near-identical
+    content without consolidation [duplicate of http://demo.example.com/copy-b.html;
+    main-text similarity=1.00; canonicals: http://demo.example.com/copy-a.html vs
+    http://demo.example.com/copy-b.html]
+    Action: Consolidate the duplicate URLs onto one canonical address.
+    Affected URLs: 2
+
+ENGAGE — Does a referred visitor find the answer and a next step?
+  F-008 [medium/P2] Content pages offer no in-content route to the next step
+    Detector: informational_dead_end (AX-003), evidence level: corroborated
+    Evidence: http://demo.example.com/copy-a.html: substantial content page has no
+    contextual links to a next step [main-region internal links=0 (excluding
+    nav/header/footer); main-region words=183] | http://demo.example.com/copy-b.html:
+    substantial content page has no contextual links to a next step [main-region
+    internal links=0 (excluding nav/header/footer); main-region words=183]
+    Action: Add contextual in-body links from content pages to the related detail or
+    action page.
+    Affected URLs: 2
+
+OPPORTUNITIES TO STRENGTHEN CITATION READINESS (no defect detected)
+----------------------------------------------------------------------------------------
+  PO-001 [P3] Let crawlers see what actually changed (accurate sitemap lastmod) (TRUST)
+    Observed: A sitemap was retrieved listing 13 URL(s) but only 0 <lastmod> value(s).
+    Do: Emit an accurate <lastmod> for every sitemap entry, driven by the content's edit
+    time.
+    Verify: Fetch the sitemap and confirm lastmod values differ across pages and match
+    recent edits.
+
+LIMITATIONS OF THIS AUDIT
+----------------------------------------------------------------------------------------
+  - Partial audit: fewer pages were read than requested, so shares and breadth are
+  measured over a small sample. Findings remain valid for the pages named.
+  - The audit reads served HTML only and does not execute JavaScript. Pages whose
+  content is assembled client-side are reported as what a non-rendering fetcher
+  observes; the rendered state was not performed — no browser engine was used; all pages
+  judged from served HTML.
+  - Off-site corroboration is limited to the external identifiers the site itself
+  declares. No search engine or directory was consulted, no claim is made about whether
+  any AI product uses this site, and the absence of external references is never treated
+  as a defect.
+  - 13 page(s) were sampled under a 20-page / 60s budget; findings describe the sample,
+  and shares are reported relative to it.
+  - 1 URL(s) were not fetched because robots.txt disallows them; they are reported as
+  findings, not inspected.

@@ -1,0 +1,5 @@
+User-agent: *
+Disallow: /guides/
+Disallow: /cart
+
+Sitemap: http://127.0.0.1:PORT/sitemap.xml

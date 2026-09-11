@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Store finder — Zenith Retail</title>
+<meta property="og:site_name" content="Zenith Retail">
+</head>
+<body>
+<div id="root"></div>
+<script>
+window.__STORE_STATE__ = {"boot":true,"locale":"en-IN","routes":["/store","/store/:id"]};
+function boot(){var a=0;for(var i=0;i<1000;i++){a+=i;}return a;}
+function hydrate(){document.getElementById("root").innerHTML="<h1>Store finder</h1>";}
+function track(){return {page:"store-finder",ts:Date.now(),session:"anonymous"};}
+function render(){hydrate();boot();track();return true;}
+render();
+</script>
+</body>
+</html>

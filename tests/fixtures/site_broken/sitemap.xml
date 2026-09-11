@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>http://127.0.0.1:PORT/</loc></url>
+  <url><loc>http://127.0.0.1:PORT/catalog.html</loc></url>
+  <url><loc>http://127.0.0.1:PORT/product-blender.html</loc></url>
+  <url><loc>http://127.0.0.1:PORT/offers-archive.html</loc></url>
+  <url><loc>http://127.0.0.1:PORT/city-picker.html</loc></url>
+  <url><loc>http://127.0.0.1:PORT/promo-heavy.html</loc></url>
+  <url><loc>http://127.0.0.1:PORT/mismatch.html</loc></url>
+  <url><loc>http://127.0.0.1:PORT/copy-a.html</loc></url>
+  <url><loc>http://127.0.0.1:PORT/copy-b.html</loc></url>
+  <url><loc>http://127.0.0.1:PORT/app-shell.html</loc></url>
+  <url><loc>http://127.0.0.1:PORT/guides/torque.html</loc></url>
+  <url><loc>http://127.0.0.1:PORT/blog/news-one.html</loc></url>
+  <url><loc>http://127.0.0.1:PORT/blog/news-two.html</loc></url>
+</urlset>

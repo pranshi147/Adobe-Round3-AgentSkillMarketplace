@@ -1,0 +1,1109 @@
+{
+  "$comment": "The defect registry is the marketplace's methodology, expressed as data. Every detector implemented in skills/*/scripts/detectors.py has exactly one entry here, and every entry declares what must be observed before a finding may be emitted, what must NOT trigger it, how severity is scaled, and how the fix is verified. Detector code reads this file for mechanism/impact/fix text so that the reasoning lives in the registry, not scattered through code.",
+  "version": "1.0.0",
+  "stages": {
+    "DISCOVER": "A compliant retrieval agent can reach the page at all.",
+    "EXTRACT": "The needed fact is present in retrievable text.",
+    "IDENTIFY": "The page/entity can be named unambiguously.",
+    "TRUST": "The fact is consistent and datable enough to rely on.",
+    "CITE": "A specific, stable passage can be attributed and quoted.",
+    "UNDERSTAND": "Relationships and context are explicit, not implied.",
+    "ENGAGE": "A visitor sent here can confirm the answer and continue."
+  },
+  "evidence_levels": {
+    "verified": "Direct deterministic observation of the defect itself (e.g. a robots Disallow line matching the URL, an HTTP 404, a noindex directive).",
+    "corroborated": "Two or more independent deterministic signals agree (e.g. JSON-LD price differs from every visible price, on several pages).",
+    "indicative": "A single heuristic signal. Reported only under needs_validation, never as a prioritised finding."
+  },
+  "defects": [
+    {
+      "id": "MR-001",
+      "detector": "important_paths_blocked_by_robots",
+      "skill": "machine-readability",
+      "stage": "DISCOVER",
+      "failure_mode": "invisible",
+      "title": "Content paths are disallowed to crawlers in robots.txt",
+      "mechanism": "A compliant retrieval agent obeys robots.txt before fetching. Any URL matched by a Disallow rule is never fetched, so the content behind it cannot be read, quoted or cited regardless of how good it is.",
+      "impact": "Pages under the blocked path can never be used as a source by a compliant retrieval agent or search crawler.",
+      "detection_logic": "Compare every discovered URL (target, sitemap entries, internal links) against the parsed robots.txt rules for our user-agent. Fire when a non-utility, content-bearing path is disallowed.",
+      "required_evidence": [
+        "The raw Disallow line from robots.txt",
+        "At least one concrete content URL it blocks",
+        "How that URL was discovered (sitemap or internal link)"
+      ],
+      "false_positive_guards": [
+        "Utility paths are excluded: cart, checkout, login, account, admin, search, api, session, order, payment, wishlist.",
+        "A blocked path that appears nowhere in the sitemap or internal link graph is ignored (blocking unused paths is normal hygiene).",
+        "A Disallow rule scoped to a different user-agent token than ours is ignored.",
+        "Disallow: / combined with an empty site is not reported separately from the target-URL block."
+      ],
+      "severity_conditions": {
+        "critical": "The audit target itself, or the site root, is blocked.",
+        "high": "A sitemap-listed content path is blocked.",
+        "medium": "Only internally-linked secondary content is blocked."
+      },
+      "recommended_fix": {
+        "summary": "Narrow the Disallow rule so it covers only non-content paths and leaves {example} crawlable.",
+        "implementation": [
+          "Edit robots.txt and replace the broad rule `{rule}` with rules scoped to utility paths only (e.g. Disallow: /cart, Disallow: /checkout).",
+          "If some agents must be excluded, scope the block to a named User-agent group rather than *.",
+          "Re-publish the sitemap so the now-crawlable URLs are listed."
+        ],
+        "why_it_works": "Removing the matching Disallow prefix is the only thing that allows a compliant fetcher to request the URL; every downstream stage depends on that first fetch.",
+        "verification": "Fetch robots.txt and confirm no Disallow rule prefixes the affected paths, then re-run this audit and confirm MR-001 no longer fires."
+      },
+      "effort": "small"
+    },
+    {
+      "id": "MR-002",
+      "detector": "noindex_on_content_page",
+      "skill": "machine-readability",
+      "stage": "DISCOVER",
+      "failure_mode": "invisible",
+      "title": "Content pages carry a noindex directive",
+      "mechanism": "A `noindex` in a meta robots tag or the X-Robots-Tag header tells indexers to drop the page from their corpus. Systems that answer from a pre-built index cannot surface it, and agents that fetch live typically treat the same directive as an exclusion signal.",
+      "impact": "The page is excluded from indexes that many retrieval pipelines query, so systems answering from an index cannot cite its facts.",
+      "detection_logic": "Read meta[name=robots|googlebot] and the X-Robots-Tag response header on every sampled page; fire when `noindex` (or `none`) appears on an informational page.",
+      "required_evidence": [
+        "The exact directive value",
+        "Whether it came from markup or an HTTP header",
+        "The affected URL"
+      ],
+      "false_positive_guards": [
+        "Utility, search-result, filter and pagination URLs are excluded — noindex is correct there.",
+        "`nofollow` alone, `noarchive`, `nosnippet` and `max-snippet` do not fire this rule.",
+        "Staging hosts are out of scope: the audit only inspects the host supplied."
+      ],
+      "severity_conditions": {
+        "critical": "The audit target or homepage is noindexed.",
+        "high": "At least 25% of sampled content pages are noindexed.",
+        "medium": "An isolated content page is noindexed."
+      },
+      "recommended_fix": {
+        "summary": "Remove the noindex directive from {example} and keep it only on genuine utility URLs.",
+        "implementation": [
+          "Delete the `noindex` value from the meta robots tag (or the X-Robots-Tag header) on the affected templates.",
+          "If the intent was to suppress duplicates, use rel=canonical to the preferred URL instead — canonicalisation consolidates without removing the page from the corpus.",
+          "Confirm no CDN/edge rule re-adds X-Robots-Tag for these paths."
+        ],
+        "why_it_works": "Indexers treat noindex as an instruction to discard the document entirely; canonicalisation expresses duplicate intent without erasing the page.",
+        "verification": "Request the URL and confirm no `noindex` in either the HTML head or the X-Robots-Tag header; re-run the audit."
+      },
+      "effort": "small"
+    },
+    {
+      "id": "MR-003",
+      "detector": "broken_internal_destinations",
+      "skill": "machine-readability",
+      "stage": "DISCOVER",
+      "failure_mode": "invisible",
+      "title": "Internally-linked pages return errors",
+      "mechanism": "A research agent expanding its view of a site follows internal links. Links whose destination returns 4xx/5xx waste the agent's small fetch budget and truncate the part of the site it ever sees; a human arriving from an AI answer hits the same dead end.",
+      "impact": "Discovery paths terminate early, so the pages beyond the broken link are never read, and referred visitors land on errors.",
+      "detection_logic": "Record HTTP status for every page fetched from the internal link graph and additionally verify a bounded sample of linked-but-unfetched internal URLs. Fire on any 4xx/5xx destination reached from a real anchor.",
+      "required_evidence": [
+        "Destination URL and status code",
+        "At least one referring page that links to it"
+      ],
+      "false_positive_guards": [
+        "Only internal, non-asset, non-utility URLs are checked.",
+        "Network timeouts alone do not fire the rule (recorded as a limitation instead) — an HTTP status is required.",
+        "URLs blocked by robots.txt are skipped, not reported as broken.",
+        "429 is treated as rate limiting, not breakage, and the checker backs off."
+      ],
+      "severity_conditions": {
+        "high": "Three or more distinct broken destinations, or a broken destination linked from the homepage.",
+        "medium": "One or two broken destinations on secondary pages."
+      },
+      "recommended_fix": {
+        "summary": "Repair or remove the {count} internal link target(s) that return errors.",
+        "implementation": [
+          "For each broken destination, either restore the page or 301-redirect it to the closest surviving equivalent.",
+          "Update the anchors on the referring pages so the link graph no longer points at a dead URL.",
+          "Add the corrected URLs to the sitemap."
+        ],
+        "why_it_works": "Fetch budgets are small; every dead destination is a fetch the agent spends without gaining any text, and each one prunes a branch of the site from its view.",
+        "verification": "Request each previously-broken URL and confirm 200 (or a single 301 to a 200); re-run the audit and confirm MR-003 no longer lists them."
+      },
+      "effort": "small"
+    },
+    {
+      "id": "MR-004",
+      "detector": "canonical_conflict",
+      "skill": "machine-readability",
+      "stage": "IDENTIFY",
+      "failure_mode": "ambiguous",
+      "title": "Canonical URLs conflict with page identity",
+      "mechanism": "rel=canonical tells a retrieval system which URL *is* this document. When it points off-site, to a dead URL, or collapses pages with materially different content onto one address, the machine either attributes the content to the wrong address or discards the page as a duplicate — so a citation cannot resolve back to it.",
+      "impact": "Content is attributed to the wrong URL, or dropped as a duplicate, making a stable citation target impossible.",
+      "detection_logic": "For each sampled page compare its canonical against its own URL, the fetched status of the canonical target, its host, and the canonical values of other sampled pages with dissimilar content.",
+      "required_evidence": [
+        "The canonical value as published",
+        "The page URL it appears on",
+        "The conflicting observation (host mismatch, dead target, or the other page sharing the target plus its content-similarity score)"
+      ],
+      "false_positive_guards": [
+        "Self-referential canonicals and canonicals that differ only by trailing slash, scheme, www, or tracking parameters are ignored.",
+        "Pages sharing a canonical are only reported when their main-text similarity is below 0.6 (genuine content collapse, not real duplicates).",
+        "Paginated URLs (?page=, /page/N) canonicalising to page one are ignored.",
+        "Cross-domain canonicals are only reported when the target host is unrelated to the audited host (syndication to a known sibling domain is not assumed to be an error, but is reported at reduced severity).",
+        "A cross-domain canonical is reported at low severity only: syndication to a partner or parent domain is a legitimate pattern, so the audit flags it for confirmation rather than asserting it is wrong."
+      ],
+      "severity_conditions": {
+        "high": "Canonical target returns 4xx/5xx, or two or more content-dissimilar pages collapse onto one canonical.",
+        "medium": "Canonical to a URL that itself canonicalises elsewhere.",
+        "low": "Cross-domain canonical on a content page, which may be legitimate syndication."
+      },
+      "recommended_fix": {
+        "summary": "Point each page's rel=canonical at its own live, preferred URL.",
+        "implementation": [
+          "Set rel=canonical to the page's own absolute HTTPS URL unless it is a genuine duplicate.",
+          "Where pages truly duplicate one another, keep the canonical but make the duplicate's content identical, or differentiate the content and give each its own canonical.",
+          "Remove canonicals pointing at URLs that do not return 200."
+        ],
+        "why_it_works": "Canonical is the machine's identity assertion for a document; making it self-consistent gives every citable page exactly one resolvable address.",
+        "verification": "Fetch each affected page, confirm the canonical resolves to a 200 URL that serves the same content, and re-run the audit."
+      },
+      "effort": "small"
+    },
+    {
+      "id": "MR-005",
+      "detector": "client_side_rendering_gap",
+      "skill": "machine-readability",
+      "stage": "EXTRACT",
+      "failure_mode": "invisible",
+      "title": "Primary content is absent from the served HTML",
+      "mechanism": "Many retrieval fetchers read only the HTML the server returns and do not execute JavaScript. When the served document is an empty application shell, the page is complete to a human browser and effectively blank to the machine, so there is no text to extract or quote.",
+      "impact": "A fetcher that does not execute JavaScript obtains no substantive text from the page and cannot quote or cite anything on it.",
+      "detection_logic": "Measure main-region word count in the raw HTML, the presence of a known empty application root element, and the script-to-document byte ratio. Fire when the page returns 200 but the served text is below the threshold and a rendering indicator is present.",
+      "required_evidence": [
+        "Word count of main-region text in the served HTML",
+        "The empty application root element id, or the script-to-HTML byte ratio",
+        "The affected URLs and their share of the sample"
+      ],
+      "false_positive_guards": [
+        "Never fires on JavaScript usage alone — a script-heavy page with adequate served text is fine.",
+        "Requires HTTP 200; error pages and redirects are excluded.",
+        "Pages that legitimately hold little text (contact, login, media galleries) are excluded from the share calculation.",
+        "A page whose <noscript> block carries the substantive content is downgraded, since a fallback exists.",
+        "Single low-text pages are reported as indicative only; a finding requires two or more pages or the homepage."
+      ],
+      "severity_conditions": {
+        "critical": "80% or more of sampled content pages, including the homepage, serve fewer than 80 main-region words.",
+        "high": "The homepage or 40%+ of sampled content pages serve less than the threshold.",
+        "medium": "Two or more secondary pages serve less than the threshold."
+      },
+      "recommended_fix": {
+        "summary": "Server-render or pre-render the primary content of {example} so the served HTML contains the page's key facts as text.",
+        "implementation": [
+          "Enable server-side rendering or static pre-rendering for the affected templates so the first HTML response contains headings, body copy and key attributes.",
+          "Where full SSR is impractical, inline a machine-readable summary of the page's key facts (name, what it is, key attributes, price/availability) into the served HTML.",
+          "Keep the rendered text identical to what the client-side app displays so the two never disagree."
+        ],
+        "why_it_works": "The extraction stage operates on the served bytes; putting the facts in those bytes is the only change that makes them retrievable without a browser engine.",
+        "verification": "Run `curl -s <url> | wc -w` (or re-run this audit) and confirm the served HTML contains the page's key sentences."
+      },
+      "effort": "large"
+    },
+    {
+      "id": "MR-006",
+      "detector": "boilerplate_dominates_content",
+      "skill": "machine-readability",
+      "stage": "EXTRACT",
+      "failure_mode": "invisible",
+      "title": "Navigation and boilerplate outweigh page content",
+      "mechanism": "Extraction pipelines separate main content from chrome. When navigation, menus and footers supply most of the text and most of it is link labels, the extracted 'content' is a list of destinations rather than statements about the entity, so no quotable claim survives the extraction step.",
+      "impact": "The text an extractor keeps for this page is mostly navigation, leaving little or nothing quotable about the page's actual subject.",
+      "detection_logic": "Compute main-region words / all words and link-text characters / total text characters per page. Fire when main content is a small minority AND link text dominates AND the page carries a large number of links.",
+      "required_evidence": [
+        "Main-region word count and total word count",
+        "Link-text character ratio",
+        "Number of links on the page"
+      ],
+      "false_positive_guards": [
+        "Requires all three conditions together (low main share, high link-text share, >60 links) so ordinary navigation-rich homepages with real copy do not fire.",
+        "Category and index pages are held to a looser threshold than article/product templates.",
+        "Pages already reported under MR-005 (empty shell) are excluded to avoid double-reporting the same missing text.",
+        "Requires two or more affected pages; a single navigation-heavy index page is recorded under needs_validation instead, because one such page is a normal site feature.",
+        "Pages where main-content and navigation regions cannot be separated — no semantic landmarks and no recognisable chrome class names, as with hashed CSS-module class names — are excluded from the measurement and recorded under needs_validation. Declaring the blind spot is more honest than judging the page on a guess."
+      ],
+      "severity_conditions": {
+        "high": "40% or more of sampled content pages, or the homepage plus one other page.",
+        "medium": "Two or more secondary pages."
+      },
+      "recommended_fix": {
+        "summary": "Add a main-content region with substantive explanatory copy to {example}.",
+        "implementation": [
+          "Wrap the page's real content in <main> or <article> so extractors can separate it from chrome.",
+          "Add two to four sentences of explanatory prose stating what the page covers and the key facts, above the link lists.",
+          "Move repeated mega-menu markup into a shared component rendered once, and avoid duplicating it inside the content region."
+        ],
+        "why_it_works": "Boilerplate removal keys off structural regions and text/link ratios; giving the page a real main region with prose changes what the extractor keeps.",
+        "verification": "Re-run the audit and confirm the main-region word share for the affected templates exceeds the reporting threshold."
+      },
+      "effort": "medium"
+    },
+    {
+      "id": "MR-007",
+      "detector": "page_identity_metadata_missing",
+      "skill": "machine-readability",
+      "stage": "IDENTIFY",
+      "failure_mode": "ambiguous",
+      "title": "Pages are not distinguishable by title or heading",
+      "mechanism": "Titles and H1s are the primary labels a retrieval system uses to tell one document from another and to decide which page answers a query. When several distinct URLs share one title, or a page has no title or no H1, the retrieval layer cannot tell the pages apart and may select or cite the wrong one.",
+      "impact": "The wrong page can be selected as the source for a claim, and citations cannot be labelled meaningfully.",
+      "detection_logic": "Collect title and H1 per sampled page. Fire when a title is missing/empty, when two or more content-dissimilar pages share an identical title, or when a content page has no H1.",
+      "required_evidence": [
+        "The duplicated or missing title value",
+        "The distinct URLs sharing it",
+        "Their content-similarity score"
+      ],
+      "false_positive_guards": [
+        "Pages with near-identical main text (similarity ≥ 0.8) are excluded — those are duplicate-content cases handled by FI-004.",
+        "Paginated series are excluded when the title differs only by page number.",
+        "Error pages and redirect landing pages are excluded.",
+        "A missing H1 alone on a page that has a distinctive title is reported at low severity only."
+      ],
+      "severity_conditions": {
+        "high": "Three or more distinct pages share a title, or the homepage has no title.",
+        "medium": "Two pages share a title, or content pages lack an H1.",
+        "low": "Isolated missing H1 with a distinctive title present."
+      },
+      "recommended_fix": {
+        "summary": "Give every distinct page a unique title and a single descriptive H1.",
+        "implementation": [
+          "Template titles as `<specific page subject> — <brand>` so the subject appears before the brand.",
+          "Ensure exactly one H1 per page containing the page subject in plain words.",
+          "Where pages legitimately duplicate, consolidate them with rel=canonical instead of leaving both indexable."
+        ],
+        "why_it_works": "Selection and citation labelling operate on title/H1; unique, subject-first labels let the retrieval layer choose and name the right document.",
+        "verification": "Re-run the audit and confirm no duplicate titles remain across sampled URLs."
+      },
+      "effort": "small"
+    },
+    {
+      "id": "MR-008",
+      "detector": "sitemap_unusable",
+      "skill": "machine-readability",
+      "stage": "DISCOVER",
+      "failure_mode": "invisible",
+      "title": "Important pages are hard to enumerate: no sitemap and weak internal discovery",
+      "mechanism": "A sitemap is one of two ways a crawler enumerates a site; internal links are the other. Either alone is usually sufficient. The defect is the combination: no usable sitemap AND important pages that are not linked from the entry page and sit several hops deep. In that state a fetch-budgeted agent has no cheap way to learn those pages exist.",
+      "impact": "Important pages are neither enumerated nor reachable within a shallow crawl, so they are unlikely to enter the corpus a research agent draws on.",
+      "detection_logic": "Fire only when BOTH hold: (a) no usable XML sitemap resolves from robots.txt or /sitemap.xml, and (b) internal discovery is measurably weak — important-path pages (about, pricing, product, contact, docs) exist in the link graph at depth 3+ without a homepage link, or the homepage exposes fewer than five distinct internal destinations. A missing sitemap on a well-linked site is reported as a proactive opportunity, never as a finding.",
+      "required_evidence": [
+        "The sitemap URLs attempted and their HTTP status or parse outcome",
+        "The specific corroborating discovery weakness, with the pages and depths measured"
+      ],
+      "false_positive_guards": [
+        "A missing sitemap alone never fires this rule — small, shallow, well-linked sites are enumerable without one.",
+        "A sitemap referenced in robots.txt at a non-standard path is honoured before concluding it is absent.",
+        "Sitemap index files are followed one level, and a gzipped sitemap that decodes correctly counts as present.",
+        "Only pages that are actually reachable in the sampled link graph count towards the discovery-weakness test; the audit does not speculate about pages it never saw.",
+        "Capped at medium and reported at corroborated confidence, because it combines an absence with a structural measurement rather than observing an exclusion directly.",
+        "The thin-entry-page branch requires at least five sampled content pages: a site with fewer pages than that is enumerable by definition, and single-page sites are common and legitimate."
+      ],
+      "severity_conditions": {
+        "medium": "No usable sitemap AND important pages are unlinked from the homepage at depth 3+.",
+        "low": "No usable sitemap AND the homepage exposes fewer than five distinct internal destinations."
+      },
+      "recommended_fix": {
+        "summary": "Publish an XML sitemap and link the important pages directly from the entry page.",
+        "implementation": [
+          "Generate /sitemap.xml listing every canonical, indexable URL with a lastmod date, and add `Sitemap: https://<host>/sitemap.xml` to robots.txt.",
+          "Add direct links to the affected important pages from the homepage's main content or primary navigation, with descriptive anchor text.",
+          "Regenerate the sitemap on publish so lastmod reflects real edits."
+        ],
+        "why_it_works": "It restores both enumeration routes at once: the sitemap lists pages independently of link depth, and the homepage links bring them inside a shallow crawl.",
+        "verification": "Fetch /sitemap.xml, confirm it parses and lists canonical URLs, and re-run the audit."
+      },
+      "effort": "small"
+    },
+    {
+      "id": "MR-009",
+      "detector": "uninformative_navigation_paths",
+      "skill": "machine-readability",
+      "stage": "DISCOVER",
+      "failure_mode": "invisible",
+      "title": "Internal links do not describe their destinations",
+      "mechanism": "Anchor text is the label a retrieval agent uses to decide which link is worth following and what the destination is about. When a large share of internal anchors read 'click here', 'more', or are bare images with no alt text, the link graph carries no semantic signal, so relevant destinations cannot be prioritised over irrelevant ones.",
+      "impact": "A fetch-budgeted research agent cannot tell which internal link leads to the information it needs, so relevant deep pages go unvisited.",
+      "detection_logic": "Across sampled pages, count internal anchors whose label is empty, a stock phrase, or an image with no alt text, and keep only those whose destination is never reached by a descriptive anchor anywhere in the sample. Fire on the share of those unrecoverable anchors.",
+      "required_evidence": [
+        "Count and share of non-descriptive internal anchors",
+        "Example anchor labels and their destinations",
+        "The pages measured"
+      ],
+      "false_positive_guards": [
+        "Requires at least 25 internal anchors across the sample so small sites are not judged on noise.",
+        "A weak anchor whose destination is ALSO linked with descriptive text somewhere in the sample is not counted: the semantic signal exists, so nothing is lost.",
+        "Icon links carrying aria-label or image alt text count as descriptive.",
+        "Pagination controls, numeric labels and skip-links are excluded.",
+        "Reported at medium at most; this is a retrieval-efficiency defect, not an exclusion."
+      ],
+      "severity_conditions": {
+        "medium": "45% or more of internal anchors are non-descriptive and unrecoverable.",
+        "low": "Between 30% and 45%."
+      },
+      "recommended_fix": {
+        "summary": "Replace stock anchor labels with the destination's subject.",
+        "implementation": [
+          "Change 'Read more' style anchors to the destination page's subject, e.g. 'Read the 2026 pricing breakdown'.",
+          "Give image-only links an alt attribute or aria-label naming the destination.",
+          "Link key entity pages (about, product, pricing) from body copy with descriptive labels, not only from the menu."
+        ],
+        "why_it_works": "Anchor text is one of the few signals available before a link is followed; making it descriptive lets a fetch-budgeted agent choose the right destination.",
+        "verification": "Re-run the audit and confirm the non-descriptive anchor share falls below 20%."
+      },
+      "effort": "medium"
+    },
+    {
+      "id": "FI-001",
+      "detector": "entity_name_inconsistency",
+      "skill": "fact-integrity",
+      "stage": "IDENTIFY",
+      "failure_mode": "ambiguous",
+      "title": "The site names its own brand inconsistently",
+      "mechanism": "An entity-resolution step answers 'which organisation is this?' by reconciling the title suffix, og:site_name, Organization/WebSite JSON-LD, the logo alt text and the copyright line. When these disagree in ways that are not simple abbreviations, the entity cannot be pinned to one name, and claims found here may be attributed to a different organisation or merged with a similarly-named one.",
+      "impact": "Claims from this site may be attributed to the wrong organisation, or not connected to the brand at all.",
+      "detection_logic": "Extract brand-name candidates from independent sources across sampled pages, normalise (case, punctuation, legal suffixes), and fire when two or more independent sources yield names that are not substring-, acronym- or token-overlap-compatible.",
+      "required_evidence": [
+        "Each conflicting name with the source it came from",
+        "The URLs where each was observed"
+      ],
+      "false_positive_guards": [
+        "Names related by containment ('Acme' vs 'Acme Technologies'), by acronym, or with ≥50% token overlap are treated as compatible.",
+        "Legal suffixes (Inc, Ltd, Pvt, GmbH, LLC) are stripped before comparison.",
+        "A single source disagreeing on one page out of many is not enough — at least two independent source types must disagree.",
+        "Product-name vs brand-name differences on product templates are excluded; only site-level identity sources are compared.",
+        "Title segments are only treated as a name claim when the SAME segment recurs across sampled titles, and then only as corroboration. Sites title pages both ways round (`Page — Brand` and `Brand | Page`), so taking a fixed end of the title would invent a second brand name on roughly half of all sites."
+      ],
+      "severity_conditions": {
+        "high": "The homepage's own identity sources disagree, or three or more independent sources disagree.",
+        "medium": "Two independent sources disagree on secondary pages."
+      },
+      "recommended_fix": {
+        "summary": "Publish one canonical brand name and use it identically in every identity surface.",
+        "implementation": [
+          "Choose the canonical legal/trading name and apply it to og:site_name, the Organization JSON-LD `name`, the logo alt text and the copyright line.",
+          "Add `alternateName` to the Organization JSON-LD for legitimate variants rather than using them interchangeably.",
+          "Add `sameAs` identifiers (official social, Wikipedia/Wikidata, registry listings) so the entity resolves to one node."
+        ],
+        "why_it_works": "Entity resolution reconciles independent name assertions; making them agree and declaring variants explicitly removes the ambiguity instead of leaving it to inference.",
+        "verification": "Re-run the audit and confirm all name sources normalise to the same value; check the Organization JSON-LD parses and contains sameAs."
+      },
+      "effort": "small"
+    },
+    {
+      "id": "FI-002",
+      "detector": "no_machine_readable_entity_identity",
+      "skill": "fact-integrity",
+      "stage": "IDENTIFY",
+      "failure_mode": "ambiguous",
+      "title": "No machine-readable statement of what this organisation is",
+      "mechanism": "With no Organization/LocalBusiness/WebSite JSON-LD and no reachable about page, the only way to learn what the entity is, is to infer it from marketing prose. Inference across similarly-named entities is exactly where research agents mix organisations up, and there is no identifier to anchor the brand to external records.",
+      "impact": "The entity has no anchor an entity-resolution step can resolve, which makes confusion with similarly-named organisations more likely.",
+      "detection_logic": "Fire only when BOTH are true across the sample: no Organization/LocalBusiness/WebSite JSON-LD anywhere, and no about/company page found in the sitemap or link graph.",
+      "required_evidence": [
+        "The absence of entity JSON-LD across N sampled pages",
+        "The absence of an about/company URL in the sitemap and link graph"
+      ],
+      "false_positive_guards": [
+        "Missing structured data alone never fires this rule — an about page satisfies the identity requirement.",
+        "Microdata/RDFa entity markup, where present, counts as machine-readable identity.",
+        "Sites where the sample never reached the homepage are excluded.",
+        "Capped at medium: this is an ambiguity risk, not a demonstrated misattribution."
+      ],
+      "severity_conditions": {
+        "medium": "Neither entity structured data nor an about page is present."
+      },
+      "recommended_fix": {
+        "summary": "Publish an about page and Organization JSON-LD carrying the canonical name and sameAs identifiers.",
+        "implementation": [
+          "Create /about with a plain-language statement of what the organisation is, who it serves, where it operates and since when.",
+          "Add Organization JSON-LD to the homepage with name, url, logo, description and sameAs identifiers.",
+          "Link the about page from the primary navigation and from the footer with descriptive anchor text."
+        ],
+        "why_it_works": "It replaces inference with an explicit, machine-parsable identity assertion that can be cross-checked against external records.",
+        "verification": "Re-run the audit; confirm Organization JSON-LD parses on the homepage and the about page returns 200."
+      },
+      "effort": "small"
+    },
+    {
+      "id": "FI-003",
+      "detector": "structured_data_contradicts_page",
+      "skill": "fact-integrity",
+      "stage": "TRUST",
+      "failure_mode": "misread",
+      "title": "Structured data disagrees with the visible page",
+      "mechanism": "Structured data is trusted precisely because it is unambiguous. When JSON-LD asserts a price, name or availability that appears nowhere in the visible text, a system reading the markup extracts a fact the page itself does not support — producing a confidently-stated wrong answer rather than a missing one.",
+      "impact": "A research agent can quote a price, name or availability that the page does not actually show.",
+      "detection_logic": "For each page with Product/Offer/Article JSON-LD, compare the declared price, name and availability against values present in the visible main text. Fire when the declared value is absent from the page and a competing visible value exists.",
+      "required_evidence": [
+        "The JSON-LD field and value",
+        "The competing visible value from the page text",
+        "The share of sampled pages affected"
+      ],
+      "false_positive_guards": [
+        "Only fires when the page shows a competing value of the same kind — a price in markup that is simply not repeated in text is not a contradiction.",
+        "Currency symbols, thousands separators and trailing zeros are normalised before comparison.",
+        "Ranges and 'from' pricing are excluded when the JSON-LD value falls inside the visible range.",
+        "Names are compared after normalisation and are exempt when the JSON-LD name is contained in the H1 or title.",
+        "Requires the markup to parse — malformed JSON-LD is reported separately.",
+        "A name mismatch requires the structured name to carry at least two content tokens and to overlap the page's title, H1 and body by under 25%, so an expanded product title in markup does not read as a contradiction."
+      ],
+      "severity_conditions": {
+        "high": "40% or more of pages carrying that markup type disagree, or a commercially material field (price, availability) disagrees on any core page.",
+        "medium": "An isolated disagreement on a secondary field."
+      },
+      "recommended_fix": {
+        "summary": "Make {field} in JSON-LD render from the same source as the visible value on {example}.",
+        "implementation": [
+          "Bind the JSON-LD field to the same data source that renders the visible value, rather than a separate constant or feed.",
+          "Add a build/CI assertion that fails when the serialised markup value differs from the rendered value.",
+          "Where the markup is intentionally a starting price, use the correct schema field (e.g. lowPrice within AggregateOffer) and reflect that in the visible copy."
+        ],
+        "why_it_works": "The contradiction exists because two sources produce the fact independently; binding them to one source removes the class of error rather than one instance.",
+        "verification": "Fetch the page, extract the JSON-LD field and the visible value, and confirm they match; re-run the audit."
+      },
+      "effort": "medium"
+    },
+    {
+      "id": "FI-004",
+      "detector": "duplicate_content_unconsolidated",
+      "skill": "fact-integrity",
+      "stage": "CITE",
+      "failure_mode": "ambiguous",
+      "title": "The same content is served at multiple URLs without consolidation",
+      "mechanism": "When near-identical content exists at several self-canonical URLs, a citing system has no basis for choosing which address represents it. Citations then split across addresses, and the same fact appearing at multiple URLs can look like independent corroboration when it is one source repeated.",
+      "impact": "Citation targets fragment across addresses and duplicate copies can be mistaken for independent sources.",
+      "detection_logic": "Compare 6-token shingle sets of main text between sampled pages. Fire when similarity ≥ 0.9 between distinct normalised URLs whose canonicals do not consolidate them.",
+      "required_evidence": [
+        "The duplicate URL pair",
+        "Their similarity score",
+        "Their canonical values"
+      ],
+      "false_positive_guards": [
+        "Pages with fewer than 150 main-region words are excluded (thin pages resemble each other trivially).",
+        "Pairs already consolidated by rel=canonical are excluded.",
+        "URL pairs differing only by tracking parameters, trailing slash, scheme or www are normalised away before comparison.",
+        "Paginated and filtered variants are excluded.",
+        "URL pairs differing only by a version segment (/v1/, /v2/, /latest/) or a locale segment (/en/, /fr/, /en-gb/) are excluded: versioned documentation and translated pages are near-identical by design."
+      ],
+      "severity_conditions": {
+        "high": "Three or more duplicate clusters, or a core entity page duplicated.",
+        "medium": "One or two duplicate pairs."
+      },
+      "recommended_fix": {
+        "summary": "Consolidate the duplicate URLs onto one canonical address.",
+        "implementation": [
+          "Pick the preferred URL for each duplicate cluster and set rel=canonical on the others to point at it.",
+          "Where the duplicates serve no purpose, 301-redirect them instead of keeping both live.",
+          "Ensure internal links and the sitemap reference only the preferred URL."
+        ],
+        "why_it_works": "Consolidation gives the content one resolvable identity, so citation and corroboration signals accumulate on a single address.",
+        "verification": "Confirm the non-preferred URLs canonicalise or redirect to the preferred one, then re-run the audit."
+      },
+      "effort": "small"
+    },
+    {
+      "id": "FI-005",
+      "detector": "timeliness_claimed_without_date_signal",
+      "skill": "fact-integrity",
+      "stage": "TRUST",
+      "failure_mode": "stale",
+      "title": "Pages assert current information but expose no date signal",
+      "mechanism": "A system deciding whether to repeat a time-sensitive fact needs to know when it was last true. Pages that say 'latest', 'current', 'in stock' or name the current year, while carrying no dateModified, no <time datetime>, and no visible date, offer no way to establish freshness — so the claim is either dropped or repeated long after it stops being true.",
+      "impact": "Time-sensitive claims cannot be dated, so they are either ignored or repeated after they become false.",
+      "detection_logic": "Fire on pages whose text contains an explicit currency claim ('latest', 'current', 'as of', 'last updated') or names the current year, but which expose no machine-readable date (JSON-LD datePublished/dateModified, <time datetime>, article:modified_time) and no parseable visible date.",
+      "required_evidence": [
+        "The timeliness phrase found in the page text",
+        "Confirmation that no date signal of any kind is present",
+        "The affected URLs"
+      ],
+      "false_positive_guards": [
+        "A visible date in ordinary formats counts as a date signal even without markup.",
+        "HTTP Last-Modified is accepted as a weak signal and downgrades the finding to low.",
+        "Evergreen pages with no timeliness markers never fire this rule.",
+        "Requires two or more affected pages, or one core page, so a single marketing adjective does not produce a finding.",
+        "Availability wording ('in stock', 'now available') does NOT trigger this rule. It describes a state rather than asserting freshness, and treating it as a timeliness claim made the rule fire on essentially every product page ever published."
+      ],
+      "severity_conditions": {
+        "high": "Undated pages carry BOTH volatile commercial wording on 30%+ of the sample AND a visible price a reader could act on.",
+        "medium": "Timeliness language with no date signal on two or more pages.",
+        "low": "Only an HTTP Last-Modified header is available."
+      },
+      "recommended_fix": {
+        "summary": "Expose a machine-readable last-updated date on pages that assert current information.",
+        "implementation": [
+          "Add `dateModified` (and `datePublished` where relevant) to the page's JSON-LD, driven by the real edit timestamp.",
+          "Render a visible 'Last updated: <date>' line wrapped in <time datetime=\"YYYY-MM-DD\">.",
+          "For volatile commercial facts, state the effective date next to the value rather than only in the page footer."
+        ],
+        "why_it_works": "Freshness is established from explicit date assertions; without one, a citing system has no evidence that a current-sounding claim is still valid.",
+        "verification": "Fetch the page and confirm a parseable date is present in markup and visible text; re-run the audit."
+      },
+      "effort": "small"
+    },
+    {
+      "id": "FI-006",
+      "detector": "stale_date_with_currency_claim",
+      "skill": "fact-integrity",
+      "stage": "TRUST",
+      "failure_mode": "stale",
+      "title": "Pages claim currency but their dates are old",
+      "mechanism": "When a page says 'latest' or names the current year while its only date signal is years old, the two assertions contradict each other. A system that trusts the date treats the content as stale; one that trusts the wording repeats outdated facts. Either way the page becomes an unreliable source.",
+      "impact": "Research agents may repeat outdated facts, or discard otherwise-good content as stale.",
+      "detection_logic": "Compare the newest date signal on the page (JSON-LD, <time>, visible text) against the audit date. Fire when the page contains currency language or references a year newer than its own newest date, and that date is more than 24 months old.",
+      "required_evidence": [
+        "The newest date found and its source",
+        "The currency claim or the newer year referenced in text",
+        "Age in months"
+      ],
+      "false_positive_guards": [
+        "Historical, archival, changelog and dated-post templates are excluded — old dates are correct there.",
+        "Copyright-year strings alone are not treated as content dates.",
+        "Requires an explicit currency claim or a year token newer than the page date; an old date on its own is not a defect.",
+        "Ages under 24 months do not fire."
+      ],
+      "severity_conditions": {
+        "high": "A core commercial or pricing page claims currency with a date more than 24 months old.",
+        "medium": "Secondary pages combine currency language with dates over 24 months old."
+      },
+      "recommended_fix": {
+        "summary": "Refresh or re-date the affected pages so the date signal matches the claim.",
+        "implementation": [
+          "Review the affected pages; where the content is still accurate, update dateModified to the real review date and say 'Reviewed on <date>'.",
+          "Where the content is out of date, correct it or mark it explicitly as an archived version.",
+          "Remove 'latest'/'current' phrasing from pages that are not maintained on that cadence."
+        ],
+        "why_it_works": "It removes the contradiction between the wording and the timestamp, which is what makes the page unusable as evidence either way.",
+        "verification": "Re-run the audit and confirm no page combines currency language with a date signal older than 24 months."
+      },
+      "effort": "medium"
+    },
+    {
+      "id": "FI-007",
+      "detector": "unattributed_editorial_content",
+      "skill": "fact-integrity",
+      "stage": "CITE",
+      "failure_mode": "ambiguous",
+      "title": "Editorial content carries no author or publisher attribution",
+      "mechanism": "To cite a claim, a system needs to say who asserted it. Article-style pages with no author, no publisher and no publication date can be quoted but not attributed, so they lose to comparable sources that can be — and any claim taken from them cannot be traced.",
+      "impact": "Claims from these pages cannot be attributed, making them weaker citation candidates than equivalent attributed sources.",
+      "detection_logic": "Identify article-like pages (Article/BlogPosting JSON-LD, /blog//news/ paths, or a date plus 300+ words). Fire when no author (JSON-LD author, meta author, byline) and no publisher assertion is present.",
+      "required_evidence": [
+        "Why the page was classified as editorial",
+        "Confirmation that author, publisher and byline are all absent",
+        "The affected URLs"
+      ],
+      "false_positive_guards": [
+        "Product, category, legal and marketing pages are excluded — attribution is not expected there.",
+        "A visible byline in text counts as attribution even without markup.",
+        "Corporate/newsroom pages where the organisation is the declared publisher are exempt.",
+        "Requires two or more editorial pages so a single undated note does not fire the rule."
+      ],
+      "severity_conditions": {
+        "medium": "Two or more editorial pages lack all attribution signals.",
+        "low": "Attribution is present in text but not in structured data."
+      },
+      "recommended_fix": {
+        "summary": "Attribute editorial pages to a named author and publisher in both text and markup.",
+        "implementation": [
+          "Add Article JSON-LD with author (Person or Organization), publisher, datePublished and dateModified.",
+          "Render a visible byline and date near the headline.",
+          "Give recurring authors a stable author page so the Person node resolves to a URL."
+        ],
+        "why_it_works": "Attribution is what turns quotable text into citable evidence; declaring it in markup makes it extractable rather than inferred from layout.",
+        "verification": "Re-run the audit and confirm each editorial page exposes author and publisher in JSON-LD and visible text."
+      },
+      "effort": "small"
+    },
+    {
+      "id": "AX-001",
+      "detector": "title_body_intent_mismatch",
+      "skill": "arrival-experience",
+      "stage": "ENGAGE",
+      "failure_mode": "bounce",
+      "title": "The page promises something its content does not deliver",
+      "mechanism": "A research agent selects and labels a link using the title. When the title's subject terms do not appear in the H1 or in the body text, the visitor arrives expecting one thing and finds another, so the referral fails at the moment of arrival — and the machine's own selection was based on a label the page does not support.",
+      "impact": "Visitors referred here do not find what the link promised and leave without completing the task.",
+      "detection_logic": "Compare content tokens of the title (brand tokens removed) against the H1 and the main text. Fire when overlap with the H1 is below 0.2 AND fewer than 30% of the title's content tokens appear anywhere in the main text.",
+      "required_evidence": [
+        "The title and H1 as published",
+        "Token-overlap measurements",
+        "Which title terms are absent from the body"
+      ],
+      "false_positive_guards": [
+        "Brand tokens are stripped from the title before comparison.",
+        "Requires both the H1 comparison and the body comparison to fail (two independent signals).",
+        "Pages with under 80 main-region words are excluded — the mismatch there is a content-absence problem (MR-005/MR-006), not a mismatch.",
+        "Titles under three content tokens are excluded as too short to measure."
+      ],
+      "severity_conditions": {
+        "high": "The homepage or a core entity page mismatches.",
+        "medium": "Secondary pages mismatch."
+      },
+      "recommended_fix": {
+        "summary": "Align the title, H1 and opening paragraph of {example} on the same subject.",
+        "implementation": [
+          "Rewrite the title to name the subject the page actually covers, in the words a visitor would use.",
+          "Repeat that subject in the H1 and in the first paragraph so the page confirms the promise immediately.",
+          "If the title is correct and the content is missing, add the content the title promises."
+        ],
+        "why_it_works": "The referral is selected on the title and judged on the first screen; matching them means the visitor's expectation is confirmed within seconds of arrival.",
+        "verification": "Re-run the audit and confirm the title/H1/body overlap measures above the threshold."
+      },
+      "effort": "small"
+    },
+    {
+      "id": "AX-002",
+      "detector": "orientation_gap",
+      "skill": "arrival-experience",
+      "stage": "UNDERSTAND",
+      "failure_mode": "bounce",
+      "title": "The page never states plainly what it is about",
+      "mechanism": "A visitor arriving from an AI answer has no browsing context — they did not navigate here, they were sent. If the opening content contains no plain declarative sentence naming the product/organisation and what it does, the visitor cannot confirm they are in the right place, and a citing system has no self-contained sentence to quote as a definition of the entity.",
+      "impact": "Neither a referred visitor nor a citing system can confirm what this page or entity actually is.",
+      "detection_logic": "Scan the first ~120 words of main text for a declarative sentence combining the page/brand subject with a definitional or capability verb pattern. Fire when no such sentence exists on a core entity page.",
+      "required_evidence": [
+        "The opening main-region text as served",
+        "Confirmation that no definitional sentence pattern matched",
+        "Word count of the opening region"
+      ],
+      "false_positive_guards": [
+        "Applies to core entity pages (homepage, about, product/service landing) only, never to article or listing templates.",
+        "Requires at least 40 words of served main text so that MR-005 shell pages are not double-reported.",
+        "A meta description containing a definitional sentence downgrades severity to low.",
+        "Non-English pages are excluded from the sentence-pattern test and reported only if no meta description exists either.",
+        "A substantive `description` in the page's own entity/product structured data downgrades the finding to low: the definitional statement exists in machine-readable form, it is just not in the visible opening content."
+      ],
+      "severity_conditions": {
+        "medium": "A core entity page opens with no definitional statement.",
+        "low": "The definition exists only in the meta description."
+      },
+      "recommended_fix": {
+        "summary": "Open {example} with one plain sentence stating what it is, who it is for, and what it does.",
+        "implementation": [
+          "Add a lead sentence of the form '<Brand> is a <category> that <does what> for <audience>.' as the first paragraph of the main content.",
+          "Follow it with two or three sentences covering the key attributes a stranger would need (coverage, availability, pricing model, location).",
+          "Mirror the same sentence in the meta description and in the Organization/Product JSON-LD `description`."
+        ],
+        "why_it_works": "It supplies exactly the self-contained, quotable statement that both a referred visitor and a citing machine need, instead of leaving the definition to be inferred from imagery and slogans.",
+        "verification": "Re-run the audit and confirm a definitional sentence is detected in the first 120 served words."
+      },
+      "effort": "small"
+    },
+    {
+      "id": "AX-003",
+      "detector": "informational_dead_end",
+      "skill": "arrival-experience",
+      "stage": "ENGAGE",
+      "failure_mode": "bounce",
+      "title": "Content pages offer no in-content route to the next step",
+      "mechanism": "A visitor arriving from an AI answer arrives mid-journey with a partly-answered question. If the page body contains no contextual links onward — only global navigation — the visitor must restart their search from the menu, and a system following the site's structure finds no relationship between this page and the pages that complete the answer.",
+      "impact": "Referred visitors have no route from the answer to the related detail or action, and related pages are not connected for retrieval.",
+      "detection_logic": "For content pages with 150+ main-region words, count internal links inside the main region (excluding nav/header/footer). Fire when the count is below 3 across a meaningful share of sampled pages.",
+      "required_evidence": [
+        "Main-region internal link count per page",
+        "Main-region word count",
+        "Share of sampled content pages affected"
+      ],
+      "false_positive_guards": [
+        "Global navigation, header and footer links are excluded from the count by design — the point is contextual linking.",
+        "Landing pages with a clear primary call to action in the main region count that CTA as a continuation route.",
+        "Pages under 150 main-region words are excluded.",
+        "Requires 30% or more of sampled content pages so a single standalone page does not fire the rule.",
+        "Pages where main-content and navigation regions cannot be separated — no semantic landmarks and no recognisable chrome class names, as with hashed CSS-module class names — are excluded from the measurement and recorded under needs_validation. Declaring the blind spot is more honest than judging the page on a guess."
+      ],
+      "severity_conditions": {
+        "medium": "30% or more of sampled content pages are dead ends.",
+        "low": "Isolated dead-end pages with an otherwise well-linked site."
+      },
+      "recommended_fix": {
+        "summary": "Add contextual in-body links from content pages to the related detail or action page.",
+        "implementation": [
+          "In each content page's body, link to the two or three most related pages using descriptive anchor text.",
+          "Place a clear next-step action (pricing, booking, contact, documentation) inside the main content region, not only in the header.",
+          "Add a short 'related' block generated from real topical relationships rather than a generic recirculation widget."
+        ],
+        "why_it_works": "It converts the arrival page into a route: the visitor continues without re-searching, and the link graph gains the topical edges retrieval uses to relate pages.",
+        "verification": "Re-run the audit and confirm affected pages carry three or more main-region internal links."
+      },
+      "effort": "medium"
+    },
+    {
+      "id": "AX-004",
+      "detector": "unresolved_context_dependency",
+      "skill": "arrival-experience",
+      "stage": "UNDERSTAND",
+      "failure_mode": "invisible",
+      "title": "Substantive content depends on a user context the fetcher cannot supply",
+      "mechanism": "When the page's real content only appears after a location, store, city or postcode is chosen, a context-free fetcher receives the pre-selection state. It then reads either nothing or an arbitrary default, so what it extracts may not correspond to any answer a real user would receive — and it has no basis for choosing a context.",
+      "impact": "A context-free agent retrieves incomplete or unrepresentative information and cannot know which context the answer applies to.",
+      "detection_logic": "Fire when a context-selection control or prompt (location/store/city/postcode) is present AND the served HTML for the same page carries little substantive main-region content, indicating the content is gated behind that selection.",
+      "required_evidence": [
+        "The context control or prompt text found in the served HTML",
+        "Served main-region word count",
+        "The affected URLs"
+      ],
+      "false_positive_guards": [
+        "Language, currency and country-region switchers alone do not fire the rule.",
+        "A page that both offers a selector and serves substantive default content is not reported — the default is what a fetcher reads, and it exists.",
+        "Requires the control and the content gap together; either alone is insufficient.",
+        "Cookie and consent dialogs are excluded."
+      ],
+      "severity_conditions": {
+        "high": "Core commercial pages serve no substantive content before context selection.",
+        "medium": "Secondary pages are context-gated."
+      },
+      "recommended_fix": {
+        "summary": "Serve a crawlable, context-independent default view alongside the personalised one.",
+        "implementation": [
+          "Render a default (e.g. national or flagship-location) version of the content in the served HTML, with the personalised view layered on top after selection.",
+          "State explicitly in text which context the default represents ('Prices shown for <default region>; availability varies by location').",
+          "Expose per-context pages at stable URLs (e.g. /delivery/mumbai) and list them in the sitemap so each context is separately citable."
+        ],
+        "why_it_works": "It gives the context-free reader something true and attributable to extract, and gives each real context its own stable address rather than hiding all of them behind one interactive state.",
+        "verification": "Fetch the page without cookies or location headers and confirm substantive content and an explicit context statement are present; re-run the audit."
+      },
+      "effort": "large"
+    },
+    {
+      "id": "AX-005",
+      "detector": "promotional_interference",
+      "skill": "arrival-experience",
+      "stage": "EXTRACT",
+      "failure_mode": "bounce",
+      "title": "Promotional and repeated blocks crowd out the page's substance",
+      "mechanism": "Promotional modules and repeated blocks are hard for an extractor to separate from content and they occupy the first screen for a visitor. When they account for a large share of the page's text, the extracted content is mostly offers rather than facts about the subject, and the referred visitor has to hunt for the answer they were sent to find.",
+      "impact": "Extraction returns promotional copy rather than the page's substantive facts, and referred visitors must search the page for the answer.",
+      "detection_logic": "Measure characters inside promo-classed containers as a share of main-region text, and count identical text blocks repeated three or more times. Fire when promotional share is high on a page that also carries substantive content.",
+      "required_evidence": [
+        "Promotional character share of main-region text",
+        "Repeated block text and its repetition count",
+        "The affected URLs"
+      ],
+      "false_positive_guards": [
+        "Advertising is not penalised as such — only its share of the page's own text is measured.",
+        "Pages whose purpose is promotional (campaign/offer landing pages) are excluded by path and by title matching.",
+        "Requires the page to contain at least 120 words of main text, so shell pages are not reported here.",
+        "Product listing repetition of names/prices is excluded; only identical multi-word blocks count.",
+        "Pages where main-content and navigation regions cannot be separated — no semantic landmarks and no recognisable chrome class names, as with hashed CSS-module class names — are excluded from the measurement and recorded under needs_validation. Declaring the blind spot is more honest than judging the page on a guess."
+      ],
+      "severity_conditions": {
+        "medium": "Promotional blocks exceed 40% of main-region text, or a block repeats 3+ times on 30%+ of sampled pages.",
+        "low": "Between 25% and 40%."
+      },
+      "recommended_fix": {
+        "summary": "Reduce promotional share above the fold and de-duplicate repeated blocks.",
+        "implementation": [
+          "Move promotional modules below the page's primary explanatory content in the DOM order.",
+          "Mark promotional containers with `aside` (or `role=\"complementary\"`) so extractors can separate them from the main content.",
+          "Render repeated modules once and reference them, instead of emitting the same block multiple times."
+        ],
+        "why_it_works": "Extractors keep main-region text and drop complementary regions; DOM order and region semantics decide what survives, and repetition dilutes the page's distinctive text.",
+        "verification": "Re-run the audit and confirm promotional share of main-region text falls below 25%."
+      },
+      "effort": "medium"
+    },
+    {
+      "id": "AX-006",
+      "detector": "interaction_gated_content",
+      "skill": "arrival-experience",
+      "stage": "ENGAGE",
+      "failure_mode": "bounce",
+      "title": "The page's substance is hidden until the visitor interacts",
+      "mechanism": "When the always-visible content of a page is thin and the substance sits inside collapsed containers — accordions, tab panels, `<details>` blocks, `aria-hidden` regions — a visitor arriving from an AI answer has to guess which control reveals the answer they were sent for. Extractors that respect hidden-state attributes may also drop that text, so the same content can be simultaneously present in the HTML and absent from what is extracted.",
+      "impact": "A referred visitor must interact before seeing the answer, and extraction pipelines that honour hidden-state attributes may discard the content entirely.",
+      "detection_logic": "Measure always-visible main-region words against words inside collapsed or hidden containers on the same page. Fire when visible main text is below 120 words and hidden content is at least twice the visible content.",
+      "required_evidence": [
+        "Always-visible main-region word count",
+        "Hidden or collapsed word count and the container type that holds it",
+        "The affected URLs"
+      ],
+      "false_positive_guards": [
+        "Cookie banners, consent dialogs, navigation drawers, mega-menus and search overlays are excluded by container class and role.",
+        "A page whose visible content is already substantive (120+ words) never fires, however much additional detail is collapsed — progressive disclosure on top of a real answer is good practice, not a defect.",
+        "Requires hidden content to be at least twice the visible content, so a single collapsed FAQ under a full article does not fire.",
+        "Pages already reported under MR-005 are excluded, because there the problem is that nothing was served at all.",
+        "Requires a core page or two or more pages; an isolated instance is recorded under needs_validation."
+      ],
+      "severity_conditions": {
+        "high": "A core entity or commercial page serves its substance only behind interaction.",
+        "medium": "Two or more secondary pages do."
+      },
+      "recommended_fix": {
+        "summary": "Render the primary answer on {example} in the always-visible content and keep interaction for secondary detail.",
+        "implementation": [
+          "Move the two or three sentences that answer the page's main question above the first collapsed container, so they are visible on arrival.",
+          "Keep accordions and tabs for supporting detail, and render their content in the HTML without hidden-state attributes where it is safe to do so.",
+          "If a tab panel must start hidden, ensure the same facts appear in the visible summary text rather than only inside the panel."
+        ],
+        "why_it_works": "It separates the answer from the detail: the arriving visitor sees confirmation immediately, and extraction no longer depends on how a specific pipeline treats hidden-state attributes.",
+        "verification": "Fetch the page and confirm the answer appears in the always-visible main region; re-run the audit and confirm AX-006 no longer fires."
+      },
+      "effort": "medium"
+    },
+    {
+      "id": "AX-007",
+      "detector": "important_pages_buried",
+      "skill": "arrival-experience",
+      "stage": "ENGAGE",
+      "failure_mode": "bounce",
+      "title": "Important pages are not reachable from the entry page",
+      "mechanism": "Pages that answer the questions people ask about a brand — what it is, what it costs, how to contact it — carry no weight if the entry page never links to them and they sit several hops down. A visitor sent to the homepage by an AI answer has to hunt through menus, and a fetch-budgeted agent expanding from the homepage is unlikely to spend requests reaching them.",
+      "impact": "Pages that answer common questions about the brand are neither one click from the entry page nor within a shallow crawl.",
+      "detection_logic": "Identify pages on important paths (about, pricing, plans, product, services, contact, docs, help) that appear in the link graph or sitemap. Fire when such a page is not linked from the homepage at all and was first reached at depth 3 or greater.",
+      "required_evidence": [
+        "The important page URL, its depth, and confirmation that the homepage does not link to it",
+        "The pages that do link to it, where known"
+      ],
+      "false_positive_guards": [
+        "Only paths the audit recognises as important are considered; ordinary deep content is expected to be deep.",
+        "A page linked from the homepage in any region — including navigation and footer — never fires, however deep it also appears elsewhere.",
+        "Downgraded to low when a usable sitemap lists the page, since enumeration is still possible and only the visitor's route is affected.",
+        "Pages the audit never reached are not speculated about.",
+        "Never escalated above medium: this is a routing weakness, not an exclusion."
+      ],
+      "severity_conditions": {
+        "medium": "An important page is unlinked from the homepage and sits at depth 3+ with no sitemap entry.",
+        "low": "The same, but the page is listed in a usable sitemap."
+      },
+      "recommended_fix": {
+        "summary": "Link the affected important pages directly from the entry page with descriptive anchor text.",
+        "implementation": [
+          "Add links to the affected pages from the homepage's main content or primary navigation, labelled with the page's subject rather than a generic phrase.",
+          "Where a page belongs under a section, add a visible breadcrumb trail so its position is explicit rather than implied by URL shape.",
+          "List the pages in the sitemap so enumeration does not depend on link depth."
+        ],
+        "why_it_works": "It shortens both routes at once — the visitor's click path and the agent's crawl path — using the anchor text as the signal that the destination is worth following.",
+        "verification": "Fetch the homepage and confirm each affected URL appears as a link with descriptive text; re-run the audit."
+      },
+      "effort": "small"
+    },
+    {
+      "id": "EX-001",
+      "detector": "declared_external_profile_unreachable",
+      "skill": "external-evidence",
+      "stage": "IDENTIFY",
+      "failure_mode": "ambiguous",
+      "title": "The site points at external profiles that do not resolve",
+      "mechanism": "`sameAs` and equivalent profile links are the site's own claim about which external records describe it. A research agent following one to corroborate the brand gets an error instead. The anchor the site offered for entity resolution does not exist, so corroboration fails at the exact point the site invited it.",
+      "impact": "Corroboration attempts that follow the site's own declared identifiers fail, weakening entity resolution rather than strengthening it.",
+      "detection_logic": "Collect external URLs the site itself declares (JSON-LD sameAs, Organization url/identifier fields). Issue a bounded number of read-only requests to those URLs only. Fire when a declared profile returns 4xx or 5xx.",
+      "required_evidence": [
+        "The declared profile URL and where it was declared",
+        "The HTTP status returned"
+      ],
+      "false_positive_guards": [
+        "Only URLs the site declares are ever fetched; the audit never searches the web or probes third-party sites the site did not name.",
+        "Network failures, timeouts and 429 responses are recorded as limitations, never as findings — an HTTP status is required.",
+        "403 is excluded: many platforms refuse automated requests while the profile itself exists and is valid for a human or a permitted client.",
+        "The absence of any declared profile is NOT this defect and is never reported as a failure; it is at most a proactive opportunity.",
+        "Capped at medium: a dead profile link is a weakened anchor, not an exclusion from retrieval."
+      ],
+      "severity_conditions": {
+        "medium": "One or more declared external profiles return 4xx or 5xx.",
+        "low": "A declared profile redirects to an unrelated destination."
+      },
+      "recommended_fix": {
+        "summary": "Correct or remove the declared external identifiers that do not resolve.",
+        "implementation": [
+          "Check each URL in the entity markup's `sameAs` array and replace or delete the ones that error.",
+          "Keep only identifiers that are stable and that you control or can verify describe this entity.",
+          "Where a profile has moved, point `sameAs` at the current canonical URL rather than relying on a redirect."
+        ],
+        "why_it_works": "sameAs is only useful while every entry resolves to a record about the same entity; a dead entry provides no corroboration and casts doubt on the rest of the array.",
+        "verification": "Request each sameAs URL and confirm a 2xx response, then re-run the audit with external checks enabled."
+      },
+      "effort": "small"
+    },
+    {
+      "id": "EX-002",
+      "detector": "external_profile_does_not_corroborate_brand",
+      "skill": "external-evidence",
+      "stage": "IDENTIFY",
+      "failure_mode": "ambiguous",
+      "title": "A declared external profile does not mention the brand name",
+      "mechanism": "An identifier only corroborates an entity if the destination is recognisably about that entity. When a declared profile resolves but its title, site name and visible text never contain any form of the brand name, an agent following the link to confirm the entity finds no confirmation — and, worse, may attach the wrong external record to the brand.",
+      "impact": "The site's declared corroboration does not corroborate it, so cross-source entity resolution may attach the wrong external record.",
+      "detection_logic": "For each declared profile that resolves, compare normalised forms of the brand name against the destination's title, og:site_name and visible text. Fire when no compatible form appears anywhere in the retrieved content.",
+      "required_evidence": [
+        "The declared profile URL",
+        "The destination title or site name retrieved",
+        "The brand name forms that were searched for"
+      ],
+      "false_positive_guards": [
+        "Name comparison uses the same containment, acronym and legal-suffix rules as on-site entity checks, so abbreviations and trading names do not fire.",
+        "A destination that could not be read as text — a login wall, an empty body, a non-HTML response — is recorded as not-checked, not as a failure to corroborate.",
+        "Handles and slugs in the URL path count as a mention, since many platforms carry the brand only in the URL.",
+        "Reported at medium at most, and only where the destination was actually retrieved and parsed."
+      ],
+      "severity_conditions": {
+        "medium": "Two or more declared profiles resolve without any recognisable form of the brand name.",
+        "low": "A single declared profile does."
+      },
+      "recommended_fix": {
+        "summary": "Point declared identifiers at profiles that name the brand, and state the brand name on those profiles.",
+        "implementation": [
+          "Review each sameAs destination and confirm the profile's own title or description contains the canonical brand name.",
+          "Where the profile is correct but does not name the brand, update the profile's display name or description on that platform.",
+          "Remove identifiers for records that describe a different entity, such as a parent company or an individual founder, unless that relationship is stated explicitly in the markup."
+        ],
+        "why_it_works": "Cross-source entity resolution works by finding the same name asserted in independent places; a profile that never states the name cannot supply that agreement.",
+        "verification": "Fetch each sameAs URL and confirm the brand name appears in its title or description; re-run the audit with external checks enabled."
+      },
+      "effort": "small"
+    },
+    {
+      "id": "EX-003",
+      "detector": "ambiguous_entity_name_without_disambiguators",
+      "skill": "external-evidence",
+      "stage": "IDENTIFY",
+      "failure_mode": "ambiguous",
+      "title": "A common-word brand name is published with nothing to disambiguate it",
+      "mechanism": "A brand named with ordinary dictionary words competes with every other use of those words. That is not a defect by itself — many strong brands do it — but it becomes a retrieval risk when the site publishes nothing that distinguishes this entity from the others: no external identifiers, no legal name, no founding date, no address or area served, no explicit category statement. An agent resolving the name then has nothing to select on.",
+      "impact": "Nothing published on the site distinguishes this entity from others using the same common name, raising the risk that claims are attributed to the wrong organisation.",
+      "detection_logic": "Compute the brand name's ambiguity profile: all tokens are common dictionary words, or the name is a single short token. Then check for any disambiguating assertion in the site's own markup — sameAs, legalName, identifier, foundingDate, address, areaServed, or a definitional category sentence. Fire only when the name is ambiguous AND no disambiguator of any kind is present.",
+      "required_evidence": [
+        "The brand name and why it scores as ambiguous",
+        "The full list of disambiguating assertions checked for and found absent"
+      ],
+      "false_positive_guards": [
+        "A common-word name alone never fires; a single disambiguating assertion of any kind is enough to suppress the finding.",
+        "Coined names, names containing an uncommon token, and multi-token names with a distinctive element are not treated as ambiguous.",
+        "No external search is performed and no claim is made about how many other entities share the name — only about what this site publishes to distinguish itself.",
+        "Capped at medium, and phrased as a retrieval risk rather than a defect in the brand's naming."
+      ],
+      "severity_conditions": {
+        "medium": "An ambiguous name with no disambiguating assertion anywhere in the sample.",
+        "low": "An ambiguous name with a category statement but no external or registry identifier."
+      },
+      "recommended_fix": {
+        "summary": "Publish disambiguating facts alongside the brand name.",
+        "implementation": [
+          "Add `legalName`, `foundingDate`, `address` or `areaServed` to the Organization markup — whichever are true and stable.",
+          "Add `sameAs` identifiers pointing at records that already describe this entity.",
+          "State the category explicitly in the visible copy: '<Brand> is a <category> serving <audience> in <region>.'"
+        ],
+        "why_it_works": "Disambiguation is a selection problem: given several entities sharing a name, a resolver needs at least one asserted attribute to choose between them. Any one of these supplies it.",
+        "verification": "Fetch the homepage and confirm at least one disambiguating assertion is present in the entity markup or the visible copy; re-run the audit."
+      },
+      "effort": "small"
+    },
+    {
+      "id": "EX-004",
+      "detector": "domain_brand_mismatch_unbridged",
+      "skill": "external-evidence",
+      "stage": "IDENTIFY",
+      "failure_mode": "ambiguous",
+      "title": "The domain name and the brand name are unrelated, with nothing linking them",
+      "mechanism": "When the registrable domain label bears no relation to the brand name the site publishes, the two have to be linked by an explicit assertion, because nothing in the string itself connects them. Where the site also publishes no `url` in its entity markup and no external identifier, an agent that encounters the brand name elsewhere has no published route back to this domain.",
+      "impact": "There is no published assertion connecting the brand name to this domain, so references to the brand elsewhere may not resolve to this site.",
+      "detection_logic": "Compare the registrable domain label against normalised brand-name forms using containment, acronym and token-overlap rules. Fire only when they are incompatible AND the entity markup declares neither a matching `url` nor any `sameAs` identifier.",
+      "required_evidence": [
+        "The domain label and the published brand name",
+        "Confirmation that no entity `url` or `sameAs` bridges them"
+      ],
+      "false_positive_guards": [
+        "Abbreviations, acronyms and partial matches between domain and brand are treated as compatible.",
+        "An Organization node whose `url` matches the audited origin is itself the bridging assertion and suppresses the finding — this is the common, correct case.",
+        "Country-code and multi-part suffixes are handled so that the comparison uses the registrable label, not the suffix.",
+        "Deliberately unrelated domains are common and legitimate; the finding is about the missing bridge, never about the choice of domain, and is capped at low."
+      ],
+      "severity_conditions": {
+        "low": "Domain label and brand name are unrelated and no entity url or sameAs bridges them."
+      },
+      "recommended_fix": {
+        "summary": "Publish an explicit assertion tying the brand name to this domain.",
+        "implementation": [
+          "Add an Organization node whose `name` is the canonical brand name and whose `url` is this site's origin.",
+          "Add `sameAs` identifiers so the brand name and the domain co-occur on records outside this site.",
+          "Use the canonical brand name in the title suffix and og:site_name on every page."
+        ],
+        "why_it_works": "It converts an association that currently exists only in a reader's head into an assertion a resolver can follow in either direction.",
+        "verification": "Fetch the homepage and confirm an Organization node names the brand and points `url` at this origin; re-run the audit."
+      },
+      "effort": "small"
+    },
+    {
+      "id": "EX-005",
+      "detector": "canonical_domain_inconsistent",
+      "skill": "external-evidence",
+      "stage": "IDENTIFY",
+      "failure_mode": "ambiguous",
+      "title": "The brand's other hostname serves a separate site instead of consolidating",
+      "mechanism": "References to a brand circulate in both hostname forms — with and without the www prefix. When both forms serve content and neither consolidates onto the other by redirect or canonical, a reference published elsewhere resolves to whichever form its author happened to use, and the two addresses accumulate separate identity and citation signals for what is one entity.",
+      "impact": "References to the brand's other hostname reach a separate address rather than the audited site, splitting identity across two origins.",
+      "detection_logic": "Request the other common form of the audited hostname (www to apex, or apex to www). Fire when it returns 2xx AND neither redirects to the audited origin nor declares a canonical pointing at it.",
+      "required_evidence": [
+        "The hostname variant requested and its HTTP status",
+        "The URL it finally resolved to and the canonical it declares",
+        "The audited origin it failed to consolidate onto"
+      ],
+      "false_positive_guards": [
+        "A variant that does not resolve at all — DNS failure, connection refused, 4xx, 5xx — never fires this rule. Serving only one hostname form is normal and correct.",
+        "A variant that redirects to the audited origin, at any redirect depth, is correct consolidation and is silent.",
+        "A variant that declares rel=canonical pointing at the audited origin is consolidated and is silent.",
+        "IP-literal hosts and hosts with no registrable label are skipped entirely; no variant exists to compare.",
+        "Requests blocked by the destination's robots.txt are recorded as not-checked rather than as findings.",
+        "Capped at medium: this splits signals, it does not exclude the site from retrieval."
+      ],
+      "severity_conditions": {
+        "medium": "The variant serves 2xx content and consolidates onto neither the audited origin nor any shared canonical.",
+        "low": "The variant serves 2xx content and declares a canonical, but to a third address rather than the audited origin."
+      },
+      "recommended_fix": {
+        "summary": "Consolidate both hostname forms onto one canonical origin.",
+        "implementation": [
+          "Choose the preferred hostname form and 301-redirect the other one to it at the edge or in the web server configuration.",
+          "Ensure every page's rel=canonical uses the preferred form, so a reference that arrives on the other form still resolves to one identity.",
+          "Use the preferred form consistently in the sitemap, in entity markup `url`, and in any external profile that links back."
+        ],
+        "why_it_works": "A single redirecting origin means every circulating form of the address ends at the same document, so identity and citation signals accumulate in one place instead of two.",
+        "verification": "Request both hostname forms and confirm one returns 301 to the other, or that both declare the same canonical; then re-run the audit with external checks enabled."
+      },
+      "effort": "small"
+    },
+    {
+      "id": "EX-006",
+      "detector": "external_references_do_not_reference_back",
+      "skill": "external-evidence",
+      "stage": "IDENTIFY",
+      "failure_mode": "ambiguous",
+      "title": "Declared external references never point back to this site",
+      "mechanism": "A one-way declaration is an unverified claim: this site asserts that an external record describes it, but the record itself says nothing about this domain. Two-way agreement is what lets a resolver treat the two as one entity, and it is the difference between an assertion and corroboration. Where several declared references all point one way, nothing published off-site leads back here.",
+      "impact": "The site's declared external references are unverified in the other direction, so nothing off-site confirms they describe this domain.",
+      "detection_logic": "For each declared reference that resolves and can be read, check whether its content links to or names the audited registrable domain. Fire when two or more resolved references contain no reference back.",
+      "required_evidence": [
+        "Each reference URL and the confirmation that it resolved and was readable",
+        "That neither a link to the audited host nor its domain in text was found",
+        "How many resolved references were checked"
+      ],
+      "false_positive_guards": [
+        "Requires the destination to have resolved AND been readable as HTML; a login wall, empty body or non-HTML response is recorded as not-checked, never as a missing back-reference.",
+        "Requires two or more such references, so a single platform that strips outbound links does not fire the rule.",
+        "A link anywhere on the destination page counts, as does the bare domain appearing in its text — the check is deliberately generous.",
+        "The absence of any declared reference is NOT this defect and is never reported as one; it is at most a proactive opportunity.",
+        "Capped at low, and reported at corroborated confidence: many platforms legitimately omit outbound links, so this is a weak-but-real signal rather than a defect in the site."
+      ],
+      "severity_conditions": {
+        "low": "Two or more resolved, readable external references contain no reference back to the audited domain."
+      },
+      "recommended_fix": {
+        "summary": "Make the external references mutual, so each side names the other.",
+        "implementation": [
+          "On each external profile you control, add the site's canonical URL to its website or link field.",
+          "Where the platform supports it, use rel=me on both sides so the relationship is machine-readable in each direction.",
+          "Drop declared references to records you cannot make mutual and do not control, rather than leaving a one-way claim in the markup."
+        ],
+        "why_it_works": "Bidirectional references let a resolver verify that both sides describe the same entity rather than trusting one side's assertion, which is the whole basis on which an external record corroborates a brand.",
+        "verification": "Fetch each declared reference and confirm the audited domain appears as a link or in its text; re-run the audit with external checks enabled."
+      },
+      "effort": "small"
+    }
+  ],
+  "modeling_note": "This registry models failure mechanisms for retrieval-oriented research agents and context-limited fetch-and-extract systems: software that requests a URL, reads the bytes the server returns, and decides what it can extract, trust and cite. It does not claim that every AI system behaves this way, that any particular product uses or ignores a given site, or that fixing a defect guarantees citation. Each entry states a specific, evidenced retrieval or trust risk and the observable property behind it.",
+  "reporting_note": "Two report-level rules apply on top of every entry here. (1) Audit status: when no page returns a readable 2xx response the audit is marked `inconclusive` and reports NO findings, because an empty findings list must never be mistakable for a clean bill of health on a site that was never read. (2) Sample floor: when fewer than five content pages are sampled, findings that infer scale from breadth are capped at medium severity and carry an evidence line saying so. Directly observed defects are unaffected — one page is enough to see a robots rule, a 404 or a noindex directive."
+}

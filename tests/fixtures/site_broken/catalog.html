@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Catalog — Zenith Retail</title>
+<meta property="og:site_name" content="Zenith Retail">
+</head>
+<body>
+<div id="app"></div>
+<script>
+window.__CATALOG__={"facets":["price","brand","rating"],"page":1,"perPage":48};
+function loadFacets(){return window.__CATALOG__.facets.map(function(f){return f;});}
+function loadProducts(){var out=[];for(var i=0;i<500;i++){out.push({id:i});}return out;}
+function paint(){document.getElementById("app").innerHTML="";loadFacets();loadProducts();}
+paint();
+</script>
+</body>
+</html>

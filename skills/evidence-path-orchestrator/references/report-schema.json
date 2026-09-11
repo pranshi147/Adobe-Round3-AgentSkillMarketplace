@@ -1,0 +1,528 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "$id": "https://example.invalid/brand-evidence-auditor/report-schema.json",
+  "title": "Brand AI visibility audit report",
+  "description": "Contract between every audit skill and the entrypoint. The required core (site, audited_at, summary counts, and findings with id/title/severity/evidence/suggested_action) matches the hackathon's minimum schema; everything else is an additive extension.",
+  "type": "object",
+  "required": [
+    "site",
+    "audited_at",
+    "summary",
+    "findings"
+  ],
+  "properties": {
+    "site": {
+      "type": "string"
+    },
+    "audited_at": {
+      "type": "string",
+      "description": "ISO-8601 UTC timestamp"
+    },
+    "auditor": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "user_agent": {
+          "type": "string"
+        }
+      }
+    },
+    "scope": {
+      "type": "object",
+      "required": [
+        "type",
+        "pages_examined",
+        "status"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "site",
+            "page"
+          ]
+        },
+        "pages_examined": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "requests_made": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "duration_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "urls_examined": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "rendering_verification": {
+          "type": "string",
+          "description": "How rendering was established. The auditor never runs a browser; this states whether any caller-supplied rendered snapshot was used."
+        },
+        "status": {
+          "enum": [
+            "complete",
+            "partial",
+            "inconclusive"
+          ],
+          "description": "How much of the site was actually read. 'inconclusive' means no page returned a readable 2xx response; findings are suppressed in that case."
+        },
+        "pages_readable": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "required": [
+        "total_findings",
+        "critical",
+        "high",
+        "medium",
+        "low"
+      ],
+      "properties": {
+        "total_findings": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "critical": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "high": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "medium": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "low": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "evidence_path": {
+      "type": "object",
+      "description": "Per-stage roll-up: which stage of discover -> identify -> extract -> understand -> trust -> cite -> engage actually breaks.",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "worst_severity": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "severity",
+          "evidence",
+          "suggested_action"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "defect_id": {
+            "type": "string",
+            "description": "Registry rule id, e.g. MR-005"
+          },
+          "detector": {
+            "type": "string"
+          },
+          "category": {
+            "enum": [
+              "machine-readability",
+              "fact-integrity",
+              "arrival-experience",
+              "external-evidence"
+            ]
+          },
+          "stage": {
+            "enum": [
+              "DISCOVER",
+              "IDENTIFY",
+              "EXTRACT",
+              "UNDERSTAND",
+              "TRUST",
+              "CITE",
+              "ENGAGE"
+            ]
+          },
+          "failure_mode": {
+            "enum": [
+              "invisible",
+              "misread",
+              "stale",
+              "ambiguous",
+              "bounce"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "severity": {
+            "enum": [
+              "critical",
+              "high",
+              "medium",
+              "low"
+            ]
+          },
+          "priority": {
+            "enum": [
+              "P0",
+              "P1",
+              "P2",
+              "P3"
+            ]
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "evidence_level": {
+            "enum": [
+              "verified",
+              "corroborated",
+              "indicative"
+            ]
+          },
+          "impact": {
+            "type": "string"
+          },
+          "mechanism": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "string"
+          },
+          "evidence_items": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": [
+                "url",
+                "observation"
+              ],
+              "properties": {
+                "url": {
+                  "type": "string"
+                },
+                "observation": {
+                  "type": "string"
+                },
+                "measurement": {
+                  "type": "string"
+                },
+                "excerpt": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "affected_urls": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "measurements": {
+            "type": "object"
+          },
+          "effort": {
+            "enum": [
+              "small",
+              "medium",
+              "large"
+            ]
+          },
+          "suggested_action": {
+            "type": "object",
+            "required": [
+              "summary",
+              "priority"
+            ],
+            "properties": {
+              "summary": {
+                "type": "string"
+              },
+              "implementation": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "why_it_works": {
+                "type": "string"
+              },
+              "verification": {
+                "type": "string"
+              },
+              "priority": {
+                "enum": [
+                  "P0",
+                  "P1",
+                  "P2",
+                  "P3"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "proactive_opportunities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "suggested_action"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "stage": {
+            "type": "string"
+          },
+          "observation": {
+            "type": "string"
+          },
+          "observed_at": {
+            "type": "string"
+          },
+          "priority": {
+            "enum": [
+              "P0",
+              "P1",
+              "P2",
+              "P3"
+            ]
+          },
+          "suggested_action": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "needs_validation": {
+      "type": "array",
+      "description": "Indicative-only signals deliberately withheld from findings.",
+      "items": {
+        "type": "object",
+        "required": [
+          "defect_id",
+          "url",
+          "observation",
+          "why_withheld"
+        ],
+        "properties": {
+          "defect_id": {
+            "type": "string"
+          },
+          "detector": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "observation": {
+            "type": "string"
+          },
+          "measurement": {
+            "type": "string"
+          },
+          "why_withheld": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "external_corroboration": {
+      "type": "object",
+      "description": "What the bounded off-site pass observed, including why it observed nothing. Absence of external references is never a defect.",
+      "properties": {
+        "mode": {
+          "enum": [
+            "auto",
+            "off"
+          ]
+        },
+        "performed": {
+          "type": "boolean"
+        },
+        "declared_identifiers": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "probes_attempted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "probes_completed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "scope_note": {
+          "type": "string"
+        },
+        "probes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "url",
+              "declared_in",
+              "checked"
+            ],
+            "properties": {
+              "url": {
+                "type": "string"
+              },
+              "declared_in": {
+                "type": "string"
+              },
+              "checked": {
+                "type": "boolean"
+              },
+              "status": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "title": {
+                "type": "string"
+              },
+              "not_checked_because": {
+                "type": "string"
+              },
+              "error": {
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "reference",
+                  "hostname"
+                ]
+              },
+              "links_back": {
+                "type": "boolean"
+              },
+              "carries_description": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "references_resolved": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "references_linking_back": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "independent_descriptions_found": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "hostname_variants_probed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "hostname_probes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "url",
+              "declared_in",
+              "checked"
+            ],
+            "properties": {
+              "url": {
+                "type": "string"
+              },
+              "declared_in": {
+                "type": "string"
+              },
+              "checked": {
+                "type": "boolean"
+              },
+              "status": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "title": {
+                "type": "string"
+              },
+              "not_checked_because": {
+                "type": "string"
+              },
+              "error": {
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "reference",
+                  "hostname"
+                ]
+              },
+              "links_back": {
+                "type": "boolean"
+              },
+              "carries_description": {
+                "type": "boolean"
+              }
+            }
+          },
+          "description": "Requests to the other common form of the audited hostname, used to check that references circulating in either form reach this site."
+        }
+      }
+    }
+  }
+}
